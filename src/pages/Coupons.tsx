@@ -5,9 +5,9 @@ import { Coupon } from '../types';
 export default function Coupons() {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [code, setCode] = useState('');
-  const [discountType, setDiscountType] = useState('10%');
+  const [discountPercentage, setDiscountPercentage] = useState<number>(10);
   const [expiryDate, setExpiryDate] = useState('');
-  const [maxSupply, setMaxSupply] = useState<string>('500');
+  const [claimLimit, setClaimLimit] = useState<string>('500');
   const [unlimited, setUnlimited] = useState(false);
   const [error, setError] = useState('');
   const { get, post } = useApi();
@@ -33,15 +33,15 @@ export default function Coupons() {
       
       const payload = {
         code,
-        discount_type: discountType,
-        expiry_date: new Date(expiryDate).toISOString(),
-        max_supply: unlimited ? null : Number(maxSupply)
+        discount_percentage: discountPercentage,
+        expires_at: new Date(expiryDate).toISOString(),
+        claim_limit: unlimited ? -1 : Number(claimLimit)
       };
       await post('/api/coupons', payload);
       setCode('');
-      setDiscountType('10%');
+      setDiscountPercentage(10);
       setExpiryDate('');
-      setMaxSupply('500');
+      setClaimLimit('500');
       setUnlimited(false);
       fetchCoupons();
     } catch (e: any) {
@@ -75,17 +75,17 @@ export default function Coupons() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Discount Type</label>
+              <label className="font-semibold text-slate-600 text-sm">Discount %</label>
               <select 
-                value={discountType} 
-                onChange={e=>setDiscountType(e.target.value)}
+                value={discountPercentage} 
+                onChange={e=>setDiscountPercentage(Number(e.target.value))}
                 className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
-                <option value="100%">100% Discount</option>
-                <option value="75%">75% Discount</option>
-                <option value="50%">50% Discount</option>
-                <option value="25%">25% Discount</option>
-                <option value="10%">10% Discount</option>
+                <option value={100}>100% Discount</option>
+                <option value={75}>75% Discount</option>
+                <option value={50}>50% Discount</option>
+                <option value={25}>25% Discount</option>
+                <option value={10}>10% Discount</option>
               </select>
             </div>
           </div>
@@ -98,7 +98,7 @@ export default function Coupons() {
               onChange={e=>setExpiryDate(e.target.value)}
               className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
             />
-            {discountType === '100%' && <p className="text-[10px] text-amber-600 italic leading-tight bg-amber-50 p-2 border border-amber-100 rounded mt-1">Note: 100% discount codes cannot exceed 1 month expiry.</p>}
+            {discountPercentage === 100 && <p className="text-[10px] text-amber-600 italic leading-tight bg-amber-50 p-2 border border-amber-100 rounded mt-1">Note: 100% discount codes cannot exceed 1 month expiry.</p>}
           </div>
           <div className="flex flex-col gap-2 border-t border-slate-100 pt-3 mt-1">
             <label className="flex items-center gap-2 text-sm text-slate-700 font-medium">
@@ -112,8 +112,8 @@ export default function Coupons() {
                   type="number" 
                   max={500}
                   required
-                  value={maxSupply} 
-                  onChange={e=>setMaxSupply(e.target.value)}
+                  value={claimLimit} 
+                  onChange={e=>setClaimLimit(e.target.value)}
                   placeholder="Max 500"
                   className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                 />
@@ -139,16 +139,16 @@ export default function Coupons() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {coupons.map((coupon) => {
-              const isExpired = new Date(coupon.expiry_date) < new Date();
+              const isExpired = new Date(coupon.expires_at) < new Date();
               return (
                 <tr key={coupon.id} className="hover:bg-slate-50/50">
                   <td className="px-6 py-4 text-slate-800 font-mono font-bold tracking-wider">{coupon.code}</td>
-                  <td className="px-6 py-4 text-slate-800 font-medium">{coupon.discount_type}</td>
-                  <td className="px-6 py-4 text-slate-500">{coupon.max_supply === null ? 'Unlimited' : coupon.max_supply}</td>
-                  <td className="px-6 py-4 text-indigo-600 font-medium">{coupon.used_count}</td>
+                  <td className="px-6 py-4 text-slate-800 font-medium">{coupon.discount_percentage}%</td>
+                  <td className="px-6 py-4 text-slate-500">{coupon.claim_limit === -1 ? 'Unlimited' : coupon.claim_limit}</td>
+                  <td className="px-6 py-4 text-indigo-600 font-medium">{coupon.claimed_count}</td>
                   <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded text-[10px] font-bold ${isExpired ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
-                       {isExpired ? 'Expired' : new Date(coupon.expiry_date).toLocaleString()}
+                       {isExpired ? 'Expired' : new Date(coupon.expires_at).toLocaleString()}
                     </span>
                   </td>
                 </tr>

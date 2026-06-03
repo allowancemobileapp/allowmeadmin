@@ -25,10 +25,10 @@ export interface AppLog {
 export interface Coupon {
   id: number;
   code: string;
-  discount_type: string;
-  expiry_date: string;
-  max_supply: number | null;
-  used_count: number;
+  discount_percentage: number;
+  expires_at: string;
+  claim_limit: number;
+  claimed_count: number;
   created_by: string;
   created_at: string;
 }

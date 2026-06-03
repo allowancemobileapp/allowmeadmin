@@ -8,7 +8,6 @@ import {
   Tag,
   Activity,
   CreditCard,
-  Gift,
   Bell,
   LogOut,
   Globe,
@@ -34,15 +33,16 @@ import Logs from './pages/Logs';
 import Coupons from './pages/Coupons';
 import Gists from './pages/Gists';
 import Tickets from './pages/Tickets';
-import Referrals from './pages/Referrals';
 import Transactions from './pages/Transactions';
 import Notifications from './pages/Notifications';
 import Dashboard from './pages/Dashboard';
 import Countries from './pages/Countries';
 import Schools from './pages/Schools';
 import Vendors from './pages/Vendors';
+import VendorMenu from './pages/VendorMenu';
 import Meals from './pages/Meals';
 import Combos from './pages/Combos';
+import Metadata from './pages/Metadata';
 
 function Sidebar() {
   const location = useLocation();
@@ -61,8 +61,8 @@ function Sidebar() {
     { to: '/coupons', label: 'Coupon Generator', icon: Tag },
     { to: '/gists', label: 'Gist Moderation', icon: FileText },
     { to: '/tickets', label: 'Ticket Management', icon: TicketIcon },
-    { to: '/referrals', label: 'Referrals', icon: Gift },
     { to: '/notifications', label: 'Notifications', icon: Bell },
+    { to: '/metadata', label: 'System Metadata', icon: Package },
   ];
 
   return (
@@ -153,18 +153,36 @@ function AppRouter() {
   const [email, setEmail] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
-  useEffect(() => {
-    const unsub = auth.onAuthStateChanged((user) => {
-      if (user && user.email === 'allowancemobileapp@gmail.com') {
-        localStorage.setItem('admin_email', user.email);
-        setEmail(user.email);
+  const verifyUser = async (userEmail: string) => {
+    try {
+      const res = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail })
+      });
+      if (res.ok) {
+        localStorage.setItem('admin_email', userEmail);
+        setEmail(userEmail);
       } else {
         localStorage.removeItem('admin_email');
         setEmail(null);
-        if (user) {
-           auth.signOut(); // Kick out unauthorized users
-           alert("Unauthorized email address.");
-        }
+        await logoutFirebase();
+        alert("Unauthorized user. You do not have access directly from database.");
+      }
+    } catch(e) {
+      console.error(e);
+      setEmail(null);
+      await logoutFirebase();
+    }
+  };
+
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged(async (user) => {
+      if (user && user.email) {
+        await verifyUser(user.email);
+      } else {
+        localStorage.removeItem('admin_email');
+        setEmail(null);
       }
       setLoading(false);
     });
@@ -174,9 +192,10 @@ function AppRouter() {
   const login = async () => {
     try {
       const user = await loginWithGoogle();
-      if (user.email !== 'allowancemobileapp@gmail.com') {
-         await logoutFirebase();
-         alert("Unauthorized user. You must use allowancemobileapp@gmail.com");
+      if (user.email) {
+         setLoading(true);
+         await verifyUser(user.email);
+         setLoading(false);
       }
     } catch (e: any) {
       alert("Login failed: " + e.message);
@@ -204,6 +223,7 @@ function AppRouter() {
             <Route path="/countries" element={<Countries />} />
             <Route path="/schools" element={<Schools />} />
             <Route path="/vendors" element={<Vendors />} />
+            <Route path="/vendors/:vendorId/menu" element={<VendorMenu />} />
             <Route path="/meals" element={<Meals />} />
             <Route path="/combos" element={<Combos />} />
             <Route path="/admins" element={<Admins />} />
@@ -212,8 +232,8 @@ function AppRouter() {
             <Route path="/coupons" element={<Coupons />} />
             <Route path="/gists" element={<Gists />} />
             <Route path="/tickets" element={<Tickets />} />
-            <Route path="/referrals" element={<Referrals />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/metadata" element={<Metadata />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>
