@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 
 export default function Schools() {
-  const { get, post, del } = useApi();
+  const { get, post, put, del } = useApi();
   const [schools, setSchools] = useState<any[]>([]);
   const [countries, setCountries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -13,13 +13,15 @@ export default function Schools() {
   const [countryId, setCountryId] = useState('');
   const [filterCountryId, setFilterCountryId] = useState('');
 
+  const [editingSchool, setEditingSchool] = useState<any>(null);
+
   const fetchData = async () => {
     try {
       const cData = await get<any[]>('/api/countries');
-      setCountries(cData);
+      setCountries(cData || []);
       const url = filterCountryId ? `/api/schools?country_id=${filterCountryId}` : '/api/schools';
       const sData = await get<any[]>(url);
-      setSchools(sData);
+      setSchools(sData || []);
     } catch (e) {
       console.error(e);
     } finally {
@@ -31,11 +33,16 @@ export default function Schools() {
     fetchData();
   }, [filterCountryId]);
 
-  const handleAdd = async (e: React.FormEvent) => {
+  const handleAddOrEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!countryId) return alert('Select a country');
     try {
-      await post('/api/schools', { name, address, location, country_id: parseInt(countryId) });
+      if (editingSchool) {
+        await put(`/api/schools/${editingSchool.id}`, { name, address, location, country_id: parseInt(countryId) });
+        setEditingSchool(null);
+      } else {
+        await post('/api/schools', { name, address, location, country_id: parseInt(countryId) });
+      }
       setName('');
       setAddress('');
       setLocation('');
@@ -43,6 +50,21 @@ export default function Schools() {
     } catch (e: any) {
       alert(e.message);
     }
+  };
+
+  const handleStartEdit = (s: any) => {
+    setEditingSchool(s);
+    setName(s.name || '');
+    setAddress(s.address || '');
+    setLocation(s.location || '');
+    setCountryId(s.country_id?.toString() || '');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingSchool(null);
+    setName('');
+    setAddress('');
+    setLocation('');
   };
 
   const handleDelete = async (id: number) => {
@@ -66,7 +88,7 @@ export default function Schools() {
           <select 
             value={filterCountryId} 
             onChange={e=>setFilterCountryId(e.target.value)}
-            className="border border-slate-200 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500"
+            className="border border-slate-200 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 bg-white"
           >
             <option value="">All Countries</option>
             {countries.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -75,11 +97,14 @@ export default function Schools() {
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 max-w-2xl">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Add School</h2>
-        <form onSubmit={handleAdd} className="space-y-4">
+        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 flex justify-between items-center">
+          {editingSchool ? 'Edit School' : 'Add School'}
+          {editingSchool && <button type="button" onClick={handleCancelEdit} className="text-xs text-red-500">Cancel Edit</button>}
+        </h2>
+        <form onSubmit={handleAddOrEdit} className="space-y-4">
           <div className="flex flex-col gap-1">
             <label className="font-semibold text-slate-600 text-sm">Country</label>
-            <select value={countryId} onChange={e=>setCountryId(e.target.value)} className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <select required value={countryId} onChange={e=>setCountryId(e.target.value)} className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
                 <option value="">Select a country</option>
                 {countries.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -88,7 +113,7 @@ export default function Schools() {
             <label className="font-semibold text-slate-600 text-sm">Name</label>
             <input 
               type="text" required value={name} onChange={e=>setName(e.target.value)}
-              className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+              className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -96,19 +121,19 @@ export default function Schools() {
                 <label className="font-semibold text-slate-600 text-sm">Address</label>
                 <input 
                   type="text" value={address} onChange={e=>setAddress(e.target.value)}
-                  className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                  className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
                 />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="font-semibold text-slate-600 text-sm">Location</label>
                 <input 
                   type="text" value={location} onChange={e=>setLocation(e.target.value)}
-                  className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                  className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
                 />
               </div>
           </div>
           <button type="submit" className="py-2 px-4 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors">
-            ADD SCHOOL
+            {editingSchool ? 'SAVE CHANGES' : 'ADD SCHOOL'}
           </button>
         </form>
       </div>
@@ -131,7 +156,8 @@ export default function Schools() {
                 <td className="px-6 py-4 text-slate-500">{s.address || '-'}</td>
                 <td className="px-6 py-4 text-slate-500">{s.location || '-'}</td>
                 <td className="px-6 py-4 text-slate-500">{s.vendor_count}</td>
-                <td className="px-6 py-4">
+                <td className="px-6 py-4 flex gap-3">
+                  <button onClick={() => handleStartEdit(s)} className="text-xs font-bold text-indigo-600 hover:underline">Edit</button>
                   <button onClick={() => handleDelete(s.id)} className="text-xs font-bold text-red-600 hover:underline">Delete</button>
                 </td>
               </tr>

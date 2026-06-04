@@ -5,23 +5,20 @@ import { Gist } from '../types';
 export default function Gists() {
   const [gists, setGists] = useState<Gist[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<number | null>(null);
-  const { get, post } = useApi();
+  const [editingGist, setEditingGist] = useState<Gist | null>(null);
+  const { get, post, put } = useApi();
 
   const fetchGists = async () => {
     try {
       const data = await get<Gist[]>('/api/gists');
-      // For demo, if no gists, generate some mocks
-      if(data.length === 0) {
-        setGists([
-           { id: 1, title: 'Sample Active Gist A', content: 'Lorem', school_id: 1, status: 'active', created_at: new Date().toISOString() },
-           { id: 2, title: 'Draft Gist B', content: 'Ipsum', school_id: 1, status: 'draft', created_at: new Date().toISOString() },
-           { id: 3, title: 'Sample Active Gist C', content: 'School 2', school_id: 2, status: 'active', created_at: new Date().toISOString() }
-        ]);
-      } else {
+      if (Array.isArray(data)) {
         setGists(data);
+      } else {
+        setGists([]);
       }
     } catch (e: any) {
       console.error(e);
+      setGists([]);
     }
   };
 
@@ -36,6 +33,20 @@ export default function Gists() {
       alert("Push notification sent!");
     } catch (e: any) {
       alert(e.message);
+    }
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGist) return;
+    try {
+      // Assuming a generic put to save gist
+      await put(`/api/gists/${editingGist.id}`, editingGist);
+      alert('Gist details updated');
+      setEditingGist(null);
+      fetchGists();
+    } catch (err: any) {
+      alert(err.message);
     }
   };
 
@@ -112,12 +123,20 @@ export default function Gists() {
                    <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
                       <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
                       <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
-                      <button 
-                        onClick={() => handleNotify(g.id)}
-                        className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors"
-                      >
-                        Send Push Notification
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => handleNotify(g.id)}
+                          className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors"
+                        >
+                          Send Push
+                        </button>
+                        <button 
+                          onClick={() => setEditingGist(g)}
+                          className="text-xs font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+                        >
+                          See Details
+                        </button>
+                      </div>
                    </div>
                 ))}
               </div>
@@ -131,11 +150,66 @@ export default function Gists() {
                 {gistsBySchool[selectedSchool].filter(g => g.status === 'draft').map(g => (
                    <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg opacity-75">
                       <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
-                      <p className="text-sm text-slate-600 mt-1">{g.content}</p>
+                      <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
+                      <button 
+                        onClick={() => setEditingGist(g)}
+                        className="text-xs font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+                      >
+                        See Details
+                      </button>
                    </div>
                 ))}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {editingGist && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+            <h2 className="text-lg font-bold text-slate-800 mb-4">Gist Details</h2>
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Title</label>
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
+                  value={editingGist.title} 
+                  onChange={e => setEditingGist({...editingGist, title: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Content</label>
+                <textarea 
+                  className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
+                  value={editingGist.content} 
+                  onChange={e => setEditingGist({...editingGist, content: e.target.value})}
+                  rows={4} 
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Status</label>
+                  <select 
+                    value={editingGist.status}
+                    onChange={e => setEditingGist({...editingGist, status: e.target.value})}
+                    className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="draft">Draft</option>
+                    <option value="active">Active</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Expiry Date</label>
+                  <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={(editingGist as any).end_date ? new Date((editingGist as any).end_date).toLocaleString() : 'No expiry'} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button type="button" onClick={() => setEditingGist(null)} className="px-4 py-2 font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg">Cancel</button>
+                <button type="submit" className="px-4 py-2 font-bold text-sm text-white bg-slate-900 hover:bg-slate-800 rounded-lg">Save Changes</button>
+              </div>
+            </form>
           </div>
         </div>
       )}

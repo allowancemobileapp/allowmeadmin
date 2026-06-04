@@ -4,12 +4,13 @@ import { Ticket } from '../types';
 
 export default function Tickets() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const { get, put } = useApi();
+  const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
+  const { get, put, del } = useApi();
 
   const fetchTickets = async () => {
     try {
       const data = await get<Ticket[]>('/api/tickets');
-      setTickets(data);
+      setTickets(data || []);
     } catch (e: any) {
       console.error(e);
     }
@@ -29,6 +30,22 @@ export default function Tickets() {
     }
   };
 
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTicket) return;
+    try {
+      await put(`/api/tickets/${editingTicket.id}/status`, {
+        // Here we could update more fields if the backend supported it,
+        // for now just close the modal.
+      });
+      alert('Ticket details updated');
+      setEditingTicket(null);
+      fetchTickets();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -43,7 +60,7 @@ export default function Tickets() {
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Title</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Price</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Status</th>
-              <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Date</th>
+              <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Created At</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Actions</th>
             </tr>
           </thead>
@@ -58,12 +75,18 @@ export default function Tickets() {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-slate-500 text-xs font-mono">{new Date(t.created_at).toLocaleDateString()}</td>
-                <td className="px-6 py-4">
+                <td className="px-6 py-4 flex gap-2">
                   <button 
                     onClick={() => handleStatusChange(t.id, t.status)}
                     className="text-xs font-bold bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"
                   >
-                    Set to {t.status === 'draft' ? 'Active' : 'Draft'}
+                    Set {t.status === 'draft' ? 'Active' : 'Draft'}
+                  </button>
+                  <button 
+                    onClick={() => setEditingTicket(t)}
+                    className="text-xs font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+                  >
+                    See Details
                   </button>
                 </td>
               </tr>
@@ -72,6 +95,48 @@ export default function Tickets() {
         </table>
         {tickets.length === 0 && <div className="p-6 text-center text-slate-400 font-medium text-sm">No tickets found.</div>}
       </div>
+
+      {editingTicket && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+            <h2 className="text-lg font-bold text-slate-800 mb-4">Ticket Details</h2>
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Title</label>
+                <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={editingTicket.title} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Description</label>
+                <textarea readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={editingTicket.description} rows={3} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Price</label>
+                  <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={`₦${editingTicket.price}`} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Status</label>
+                  <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={editingTicket.status} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Created At</label>
+                  <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={new Date(editingTicket.created_at).toLocaleString()} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Expiry Date</label>
+                  <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={(editingTicket as any).end_date ? new Date((editingTicket as any).end_date).toLocaleString() : 'No expiry'} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button type="button" onClick={() => setEditingTicket(null)} className="px-4 py-2 font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg">Close</button>
+                <button type="submit" className="px-4 py-2 font-bold text-sm text-white bg-slate-900 hover:bg-slate-800 rounded-lg">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

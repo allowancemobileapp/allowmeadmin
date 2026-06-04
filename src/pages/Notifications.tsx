@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 
 export default function Notifications() {
@@ -7,7 +7,21 @@ export default function Notifications() {
   const [sending, setSending] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
-  const { post } = useApi();
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const { get, post } = useApi();
+
+  const fetchNotifications = async () => {
+    try {
+      const data = await get<any[]>('/api/notifications');
+      setNotifications(data || []);
+    } catch (e: any) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,6 +35,7 @@ export default function Notifications() {
       setSuccess('General push notification broadcasted successfully.');
       setTitle('');
       setMessage('');
+      fetchNotifications();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -74,6 +89,25 @@ export default function Notifications() {
             {sending ? 'BROADCASTING...' : 'BROADCAST TO ALL USERS'}
           </button>
         </form>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Past Broadcasts</h2>
+        <div className="space-y-4">
+          {notifications.map(n => (
+            <div key={n.id} className="p-4 border border-slate-100 bg-slate-50 rounded-lg">
+              <div className="flex justify-between items-start">
+                <h3 className="font-bold text-slate-800 text-sm">{n.title}</h3>
+                <span className="text-[10px] text-slate-400 font-mono">{new Date(n.created_at).toLocaleString()}</span>
+              </div>
+              <p className="text-sm text-slate-600 mt-2">{n.message}</p>
+              <div className="text-[10px] text-slate-400 mt-2">Sent by: {n.sent_by}</div>
+            </div>
+          ))}
+          {notifications.length === 0 && (
+            <div className="text-sm text-slate-400 font-medium">No past broadcasts found.</div>
+          )}
+        </div>
       </div>
     </div>
   );

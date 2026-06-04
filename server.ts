@@ -291,6 +291,13 @@ app.post('/api/gists/:id/notify', requireAdmin, async (req, res) => {
 });
 
 // -- Notifications --
+app.get('/api/notifications', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM allowance_notifications ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/notifications', requireAdmin, async (req, res) => {
   try {
     const { title, message } = req.body;
