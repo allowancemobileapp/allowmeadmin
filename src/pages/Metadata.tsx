@@ -2,78 +2,94 @@ import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 
 export default function Metadata() {
-  const { get, post } = useApi();
+  const { get } = useApi();
+  const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // Example settings for metadata control
-  const [appName, setAppName] = useState('');
-  const [appCurrency, setAppCurrency] = useState('');
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
-
-  useEffect(() => {
-    // In a real app this would fetch from a specific metadata endpoint
-    // For now we'll simulate it, or just use placeholders.
-    setAppName('Allowance Admin Dashboard');
-    setAppCurrency('NGN');
-    setMaintenanceMode(false);
-    setLoading(false);
-  }, []);
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const fetchStats = async () => {
     try {
-      // Simulate save
-      alert('Metadata details updated successfully.');
-    } catch (e: any) {
-      alert(e.message);
+      const data = await get<any>('/api/metadata/stats');
+      setStats(data);
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
     }
   };
 
-  if (loading) return <div className="p-8 text-slate-500">Loading metadata...</div>;
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  if (loading) return <div className="p-8 text-slate-500">Loading system metadata...</div>;
+
+  if (!stats) return <div className="p-8 text-red-500">Failed to load metadata stats.</div>;
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-800">System Metadata</h1>
-        <p className="text-sm text-slate-500 mt-1">Configure global application variables and environment settings.</p>
+        <p className="text-sm text-slate-500 mt-1">Real-time application analytics and statistics.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-        <form onSubmit={handleSave} className="space-y-6">
-          <div className="space-y-4">
-            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-2">General App Settings</h2>
-            
-            <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Application Name</label>
-              <input 
-                type="text" required value={appName} onChange={e=>setAppName(e.target.value)}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
-              />
-            </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Total Users */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Total Users</h3>
+          <div className="text-3xl font-bold text-slate-800">{stats.total_users || 0}</div>
+        </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Default Currency Symbol</label>
-              <input 
-                type="text" required value={appCurrency} onChange={e=>setAppCurrency(e.target.value)}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
-              />
-            </div>
-            
-            <div className="flex flex-col gap-1 pt-2">
-              <label className="flex items-center gap-2 text-sm text-slate-700 font-medium">
-                <input 
-                  type="checkbox" checked={maintenanceMode} onChange={e=>setMaintenanceMode(e.target.checked)} 
-                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
-                />
-                Enable Maintenance Mode (Restricts access to the main app)
-              </label>
-            </div>
+        {/* New Users Today */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">New Users (Today)</h3>
+          <div className="text-3xl font-bold text-emerald-600">+{stats.new_users_today || 0}</div>
+        </div>
+
+        {/* Total Subscribers */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Total Subscribers</h3>
+          <div className="text-3xl font-bold text-indigo-600">{stats.total_subscribers || 0}</div>
+        </div>
+
+        {/* New Subscribers Today */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">New Subscribers (Today)</h3>
+          <div className="text-3xl font-bold text-emerald-600">+{stats.new_subscribers_today || 0}</div>
+        </div>
+        
+        {/* Active Tickets */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Active Tickets</h3>
+          <div className="text-3xl font-bold text-slate-800">{stats.active_tickets || 0}</div>
+        </div>
+
+        {/* Total Schools */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Total Schools</h3>
+          <div className="text-3xl font-bold text-slate-800">{stats.total_schools || 0}</div>
+        </div>
+
+        {/* Active Gists */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Active Gists</h3>
+          <div className="text-3xl font-bold text-emerald-600">{stats.active_gists || 0}</div>
+        </div>
+
+        {/* Total Revenue */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Total Money Made</h3>
+          <div className="text-2xl font-bold text-amber-600 truncate" title={`₦${stats.total_revenue || 0}`}>
+            ₦{Number(stats.total_revenue || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
           </div>
-          
-          <button type="submit" className="py-2 px-6 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors">
-            SAVE CHANGES
-          </button>
-        </form>
+        </div>
+
+        {/* Revenue Today */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between border-l-4 border-l-emerald-500">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Money Made Today</h3>
+          <div className="text-2xl font-bold text-emerald-600 truncate" title={`₦${stats.revenue_today || 0}`}>
+            ₦{Number(stats.revenue_today || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -34,10 +34,7 @@ export default function Tickets() {
     e.preventDefault();
     if (!editingTicket) return;
     try {
-      await put(`/api/tickets/${editingTicket.id}/status`, {
-        // Here we could update more fields if the backend supported it,
-        // for now just close the modal.
-      });
+      await put(`/api/tickets/${editingTicket.id}`, editingTicket);
       alert('Ticket details updated');
       setEditingTicket(null);
       fetchTickets();
@@ -53,7 +50,7 @@ export default function Tickets() {
         <p className="text-sm text-slate-500 mt-1">Manage active tickets and drafts.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
         <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
             <tr>
@@ -103,20 +100,42 @@ export default function Tickets() {
             <form onSubmit={handleSaveEdit} className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Title</label>
-                <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={editingTicket.title} />
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
+                  value={editingTicket.title} 
+                  onChange={e => setEditingTicket({...editingTicket, title: e.target.value})} 
+                />
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Description</label>
-                <textarea readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={editingTicket.description} rows={3} />
+                <textarea 
+                  className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
+                  value={editingTicket.description} 
+                  onChange={e => setEditingTicket({...editingTicket, description: e.target.value})} 
+                  rows={3} 
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Price</label>
-                  <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={`₦${editingTicket.price}`} />
+                  <input 
+                    type="number" 
+                    className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
+                    value={editingTicket.price} 
+                    onChange={e => setEditingTicket({...editingTicket, price: parseInt(e.target.value) || 0})} 
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Status</label>
-                  <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={editingTicket.status} />
+                  <select 
+                    className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
+                    value={editingTicket.status} 
+                    onChange={e => setEditingTicket({...editingTicket, status: e.target.value})}
+                  >
+                    <option value="draft">Draft</option>
+                    <option value="active">Active</option>
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -130,7 +149,7 @@ export default function Tickets() {
                 </div>
               </div>
               <div className="flex justify-end gap-3 mt-6">
-                <button type="button" onClick={() => setEditingTicket(null)} className="px-4 py-2 font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg">Close</button>
+                <button type="button" onClick={() => setEditingTicket(null)} className="px-4 py-2 font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg">Cancel</button>
                 <button type="submit" className="px-4 py-2 font-bold text-sm text-white bg-slate-900 hover:bg-slate-800 rounded-lg">Save Changes</button>
               </div>
             </form>

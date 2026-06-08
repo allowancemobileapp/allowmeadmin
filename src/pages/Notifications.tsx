@@ -88,6 +88,9 @@ export default function Notifications() {
           >
             {sending ? 'BROADCASTING...' : 'BROADCAST TO ALL USERS'}
           </button>
+          <p className="text-xs text-slate-500 mt-2 text-center">
+            Note: This broadcasts to the database and logs locally. To reach mobile devices with a notification balloon, you must configure Firebase Cloud Messaging (FCM) credentials in the backend.
+          </p>
         </form>
       </div>
 

@@ -36,11 +36,22 @@ export default function Gists() {
     }
   };
 
+  const handleDeleteGist = async (id: number) => {
+    if (!window.confirm("Are you sure you want to delete this gist?")) return;
+    try {
+      await del(`/api/gists/${id}`);
+      alert("Gist successfully deleted");
+      if (editingGist && editingGist.id === id) setEditingGist(null);
+      fetchGists();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
+
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingGist) return;
     try {
-      // Assuming a generic put to save gist
       await put(`/api/gists/${editingGist.id}`, editingGist);
       alert('Gist details updated');
       setEditingGist(null);
@@ -50,14 +61,16 @@ export default function Gists() {
     }
   };
 
-  // Group by school
-  const gistsBySchool = gists.reduce((acc, gist) => {
-    if (!acc[gist.school_id]) acc[gist.school_id] = [];
-    acc[gist.school_id].push(gist);
+  // Group by school safely
+  const gistsBySchool = (gists || []).reduce((acc, gist) => {
+    if (!gist) return acc;
+    const sid = gist.school_id || 0; // 0 for global
+    if (!acc[sid]) acc[sid] = [];
+    acc[sid].push(gist);
     return acc;
   }, {} as Record<number, Gist[]>);
 
-  const schoolIds = Object.keys(gistsBySchool).map(Number);
+  const schoolIds = Array.from(new Set([0, ...Object.keys(gistsBySchool).map(Number)])).sort((a,b) => a-b);
 
   return (
     <div className="space-y-6">
@@ -66,8 +79,8 @@ export default function Gists() {
         <p className="text-sm text-slate-500 mt-1">Manage active gists, drafts, and push notifications.</p>
       </div>
 
-      {!selectedSchool ? (
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+      {selectedSchool === null ? (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
               <tr>
@@ -84,7 +97,9 @@ export default function Gists() {
                 const draft = schoolGists.filter(g => g.status === 'draft').length;
                 return (
                   <tr key={sid} className="hover:bg-slate-50/50">
-                    <td className="px-6 py-4 text-slate-800 font-bold uppercase tracking-wider text-xs">School #{sid}</td>
+                    <td className="px-6 py-4 text-slate-800 font-bold uppercase tracking-wider text-xs">
+                      {sid === 0 ? "Global" : `School #${sid}`}
+                    </td>
                     <td className="px-6 py-4 text-emerald-600 font-bold">{active}</td>
                     <td className="px-6 py-4 text-amber-500 font-bold">{draft}</td>
                     <td className="px-6 py-4">
@@ -111,7 +126,9 @@ export default function Gists() {
             ← Back to Schools
           </button>
           
-          <h2 className="text-xl text-slate-800 font-bold">School #{selectedSchool} Gists</h2>
+          <h2 className="text-xl text-slate-800 font-bold">
+             {selectedSchool === 0 ? 'Global Gists' : `School #${selectedSchool} Gists`}
+          </h2>
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
@@ -119,7 +136,7 @@ export default function Gists() {
                 <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Active Gists
               </h3>
               <div className="space-y-4">
-                {gistsBySchool[selectedSchool].filter(g => g.status === 'active').map(g => (
+                {(gistsBySchool[selectedSchool] || []).filter(g => g.status === 'active').map(g => (
                    <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
                       <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
                       <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
@@ -147,7 +164,7 @@ export default function Gists() {
                 <span className="w-2 h-2 rounded-full bg-amber-500"></span> Drafts
               </h3>
               <div className="space-y-4">
-                {gistsBySchool[selectedSchool].filter(g => g.status === 'draft').map(g => (
+                {(gistsBySchool[selectedSchool] || []).filter(g => g.status === 'draft').map(g => (
                    <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg opacity-75">
                       <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
                       <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
@@ -166,27 +183,38 @@ export default function Gists() {
       )}
 
       {editingGist && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 my-8">
             <h2 className="text-lg font-bold text-slate-800 mb-4">Gist Details</h2>
             <form onSubmit={handleSaveEdit} className="space-y-4">
+              {(editingGist as any).media_url && (
+                <div className="mb-4">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Attached Media</label>
+                  <div className="bg-slate-50 border border-slate-200 p-2 rounded-lg max-h-48 overflow-hidden flex justify-center items-center">
+                    {/* @ts-ignore */}
+                     <img src={(editingGist as any).media_url} alt="Gist Media" className="max-w-full max-h-44 object-contain rounded" onError={(e) => e.currentTarget.style.display = 'none'} />
+                  </div>
+                </div>
+              )}
               <div>
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Title</label>
-                <input 
-                  type="text" 
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Title / Message</label>
+                <textarea 
                   className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
                   value={editingGist.title} 
                   onChange={e => setEditingGist({...editingGist, title: e.target.value})}
+                  rows={4}
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Content</label>
-                <textarea 
-                  className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500" 
-                  value={editingGist.content} 
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Context (Local / Global)</label>
+                <select 
+                  value={editingGist.content}
                   onChange={e => setEditingGist({...editingGist, content: e.target.value})}
-                  rows={4} 
-                />
+                  className="w-full border border-slate-200 rounded px-3 py-2 bg-white text-slate-900 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="local">Local</option>
+                   <option value="global">Global</option>
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -205,9 +233,12 @@ export default function Gists() {
                   <input type="text" readOnly className="w-full border border-slate-200 rounded px-3 py-2 bg-slate-50 text-slate-900" value={(editingGist as any).end_date ? new Date((editingGist as any).end_date).toLocaleString() : 'No expiry'} />
                 </div>
               </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <button type="button" onClick={() => setEditingGist(null)} className="px-4 py-2 font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg">Cancel</button>
-                <button type="submit" className="px-4 py-2 font-bold text-sm text-white bg-slate-900 hover:bg-slate-800 rounded-lg">Save Changes</button>
+              <div className="flex justify-between items-center mt-6 pt-4 border-t border-slate-100">
+                <button type="button" onClick={() => handleDeleteGist(editingGist.id)} className="px-3 py-2 font-bold text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors">Delete Gist</button>
+                <div className="flex gap-3">
+                    <button type="button" onClick={() => setEditingGist(null)} className="px-4 py-2 font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg">Cancel</button>
+                    <button type="submit" className="px-4 py-2 font-bold text-sm text-white bg-slate-900 hover:bg-slate-800 rounded-lg">Save Changes</button>
+                </div>
               </div>
             </form>
           </div>

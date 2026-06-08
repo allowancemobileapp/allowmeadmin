@@ -5,6 +5,7 @@ export default function Transactions() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [generating, setGenerating] = useState(false);
   const [generateMsg, setGenerateMsg] = useState('');
+  const [activeTab, setActiveTab] = useState<string>('food');
   const { get, post } = useApi();
 
   useEffect(() => {
@@ -24,6 +25,18 @@ export default function Transactions() {
       setGenerating(false);
     }
   };
+
+  // Group transactions by simple normalized types for the tabs
+  const getNormalizedType = (type: string) => {
+    if (!type) return 'other';
+    const lowerType = type.toLowerCase();
+    if (lowerType.includes('food') || lowerType.includes('combo') || lowerType.includes('meal')) return 'food';
+    if (lowerType.includes('ticket')) return 'ticket';
+    if (lowerType.includes('gist')) return 'gist';
+    return 'other';
+  };
+
+  const filteredTransactions = transactions.filter(tx => getNormalizedType(tx.type) === activeTab);
 
   return (
     <div className="space-y-6">
@@ -47,7 +60,20 @@ export default function Transactions() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+      {/* Tabs */}
+      <div className="flex bg-slate-200 p-1 rounded-lg w-full max-w-sm">
+        {['food', 'ticket', 'gist', 'other'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`flex-1 text-xs font-bold py-2 rounded-md transition-all ${activeTab === tab ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
         <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
             <tr>
@@ -59,11 +85,11 @@ export default function Transactions() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {transactions.map((tx: any) => (
+            {filteredTransactions.map((tx: any) => (
               <tr key={tx.id} className="hover:bg-slate-50/50">
                 <td className="px-6 py-4 text-slate-800 font-bold uppercase tracking-wider text-xs">{tx.type}</td>
                 <td className="px-6 py-4 text-slate-600">{tx.user_email || '-'}</td>
-                <td className="px-6 py-4 text-indigo-700 font-mono font-bold text-base">₦{parseFloat(tx.amount).toFixed(2)}</td>
+                <td className="px-6 py-4 text-indigo-700 font-mono font-bold text-base">₦{(parseFloat(tx.amount) / 100).toFixed(2)}</td>
                 <td className="px-6 py-4">
                   <span className={`px-2 py-1 rounded text-[10px] font-bold ${tx.status === 'successful' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-300'}`}>
                     {tx.status}
@@ -74,7 +100,7 @@ export default function Transactions() {
             ))}
           </tbody>
         </table>
-        {transactions.length === 0 && <div className="p-6 text-center text-slate-400 font-medium text-sm">No transactions recorded yet.</div>}
+        {filteredTransactions.length === 0 && <div className="p-6 text-center text-slate-400 font-medium text-sm">No transactions found for this type.</div>}
       </div>
     </div>
   );

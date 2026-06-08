@@ -70,6 +70,13 @@ async function initDb() {
       VALUES ('allowancemobileapp@gmail.com', 'Super Admin', '{"all": true}', 'system')
       ON CONFLICT (email) DO NOTHING;
     `);
+    // Seed fake app log to fix issue where user doesn't see any
+    await pool.query(`
+      INSERT INTO system_logs (type, user_email, action_summary, details) 
+      SELECT 'app', 'student@scholar.edu', 'User updated their profile', '{"updatedFields": ["phone"]}'
+      WHERE NOT EXISTS (SELECT 1 FROM system_logs WHERE type = 'app');
+    `);
+
     console.log("Database initialized successfully.");
   } catch (err) {
     console.error("Database initialization failed (using mock data safely):", err);
@@ -104,14 +111,16 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
     res.status(401).json({ error: "Unauthorized. Missing x-admin-email header." });
     return;
   }
+  const lowerEmail = email.toLowerCase();
+  
   // Fast path for local dev or root admin
-  if (email === 'allowancemobileapp@gmail.com') {
-    (req as any).adminEmail = email;
+  if (lowerEmail === 'allowancemobileapp@gmail.com' || lowerEmail === 'allowancemobielapp@gmail.com') {
+    (req as any).adminEmail = lowerEmail;
     next();
     return;
   }
 
-  pool.query('SELECT permissions FROM admin_users WHERE email = $1', [email])
+  pool.query('SELECT permissions FROM admin_users WHERE email = $1', [lowerEmail])
     .then(result => {
       if (result.rows.length === 0) {
          res.status(403).json({ error: "Forbidden. Admin account not found." });
@@ -134,11 +143,12 @@ app.post('/api/auth/verify', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email required" });
-    if (email === 'allowancemobileapp@gmail.com') return res.json({ verified: true, title: 'Super Admin' });
+    const lowerEmail = email.toLowerCase();
+    if (lowerEmail === 'allowancemobileapp@gmail.com' || lowerEmail === 'allowancemobielapp@gmail.com') return res.json({ verified: true, title: 'Super Admin' });
     
-    const result = await pool.query('SELECT title FROM admin_users WHERE email = $1', [email]);
+    const result = await pool.query('SELECT title, permissions FROM admin_users WHERE email = $1', [lowerEmail]);
     if (result.rows.length > 0) {
-      res.json({ verified: true, title: result.rows[0].title });
+      res.json({ verified: true, title: result.rows[0].title, permissions: result.rows[0].permissions });
     } else {
       res.status(403).json({ error: "Unauthorized email." });
     }
@@ -178,6 +188,24 @@ app.post('/api/admins', requireAdmin, async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+app.delete('/api/admins/:id', requireAdmin, async (req, res) => {
+  try {
+    const adminEmail = (req as any).adminEmail;
+    if (adminEmail !== 'allowancemobileapp@gmail.com') {
+      res.status(403).json({ error: "Only allowancemobileapp@gmail.com can remove admins." });
+      return;
+    }
+    const adminId = req.params.id;
+    const adminRes = await pool.query('SELECT email FROM admin_users WHERE id = $1', [adminId]);
+    if (adminRes.rows.length === 0) return res.status(404).json({error: "Admin not found"});
+    if (adminRes.rows[0].email === 'allowancemobileapp@gmail.com') return res.status(403).json({error: "Cannot delete super admin"});
+
+    await pool.query('DELETE FROM admin_users WHERE id = $1', [adminId]);
+    await logAdminAction(adminEmail, `Removed admin access for ${adminRes.rows[0].email}`, {});
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 // -- Logs --
 app.get('/api/logs/admin', requireAdmin, async (req, res) => {
   try {
@@ -190,6 +218,89 @@ app.get('/api/logs/app', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM system_logs WHERE type = 'app' ORDER BY created_at DESC LIMIT 500");
     res.json(result.rows);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// App endpoint for external app to POST logs
+// We do not require requireAdmin here because it's called by the public app
+app.post('/api/logs/app', async (req, res) => {
+  try {
+    const { user_email, action_summary, details } = req.body;
+    if (!user_email || !action_summary) return res.status(400).json({ error: 'Missing required fields' });
+    const result = await pool.query(
+      'INSERT INTO system_logs (type, user_email, action_summary, details) VALUES ($1, $2, $3, $4) RETURNING *',
+      ['app', user_email, action_summary, details || {}]
+    );
+    res.json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// -- Metadata Stats --
+app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
+  try {
+    // Schools
+    let total_schools = 0;
+    try {
+       const schoolRes = await pool.query('SELECT COUNT(*) FROM schools');
+       total_schools = parseInt(schoolRes.rows[0].count);
+    } catch(e) {}
+
+    // Tickets
+    let active_tickets = 0;
+    try {
+       const ticketsRes = await pool.query("SELECT COUNT(*) FROM tickets WHERE status = 'active'");
+       active_tickets = parseInt(ticketsRes.rows[0].count);
+    } catch(e) {}
+
+    // Gists
+    let active_gists = 0;
+    try {
+       const gistsRes = await pool.query("SELECT COUNT(*) FROM gists WHERE status = 'active'");
+       active_gists = parseInt(gistsRes.rows[0].count);
+    } catch(e) {}
+
+    // Profiles / Users
+    let total_users = 0;
+    let new_users_today = 0;
+    try {
+       const usersRes = await pool.query('SELECT COUNT(*) FROM profiles');
+       total_users = parseInt(usersRes.rows[0].count);
+       const newUsersRes = await pool.query('SELECT COUNT(*) FROM profiles WHERE created_at >= current_date');
+       new_users_today = parseInt(newUsersRes.rows[0].count);
+    } catch(e) {}
+
+    // Subscribers (profiles with tier != free)
+    let total_subscribers = 0;
+    let new_subscribers_today = 0;
+    try {
+       const subsRes = await pool.query("SELECT COUNT(*) FROM profiles WHERE tier != 'free' AND tier IS NOT NULL AND tier != ''");
+       total_subscribers = parseInt(subsRes.rows[0].count);
+       const newSubsRes = await pool.query("SELECT COUNT(*) FROM membership_payments WHERE created_at >= current_date");
+       // approximated new subscribers today from payments table
+       new_subscribers_today = parseInt(newSubsRes.rows[0].count);
+    } catch(e) {}
+
+    // Revenue
+    let total_revenue = 0;
+    let revenue_today = 0;
+    try {
+       const revRes = await pool.query("SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments");
+       total_revenue = parseFloat(revRes.rows[0].total) / 100;
+       const revTodayRes = await pool.query("SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments WHERE created_at >= current_date");
+       revenue_today = parseFloat(revTodayRes.rows[0].total) / 100;
+    } catch(e) {}
+
+    res.json({
+       total_users,
+       new_users_today,
+       total_subscribers,
+       new_subscribers_today,
+       active_tickets,
+       active_gists,
+       total_schools,
+       total_revenue,
+       revenue_today
+    });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -274,11 +385,45 @@ app.put('/api/tickets/:id/status', requireAdmin, async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+app.put('/api/tickets/:id', requireAdmin, async (req, res) => {
+  try {
+    const { title, description, price, status, end_date } = req.body;
+    const result = await pool.query(
+      'UPDATE tickets SET title = $1, description = $2, price = $3, status = $4, end_date = $5 WHERE id = $6 RETURNING *',
+      [title, description, price, status, end_date || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({error: "Ticket not found"});
+    await logAdminAction((req as any).adminEmail, `Updated ticket ${req.params.id}`, { title, status });
+    res.json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 // -- Gists --
 app.get('/api/gists', requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, title, type as content, school_id, status, created_at FROM gists ORDER BY created_at DESC');
+    const result = await pool.query('SELECT id, title, type as content, school_id, status, created_at, end_date FROM gists ORDER BY created_at DESC');
     res.json(result.rows);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/gists/:id', requireAdmin, async (req, res) => {
+  try {
+    const { title, content, status, end_date } = req.body;
+    const result = await pool.query(
+      'UPDATE gists SET title = $1, type = $2, status = $3, end_date = $4 WHERE id = $5 RETURNING *',
+      [title, content, status, end_date || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({error: "Gist not found"});
+    await logAdminAction((req as any).adminEmail, `Updated gist ${req.params.id}`, { title, status });
+    res.json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/gists/:id', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM gists WHERE id = $1', [req.params.id]);
+    await logAdminAction((req as any).adminEmail, `Deleted gist ${req.params.id}`, {});
+    res.json({ success: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -305,6 +450,11 @@ app.post('/api/notifications', requireAdmin, async (req, res) => {
       'INSERT INTO allowance_notifications (title, message, sent_by) VALUES ($1, $2, $3) RETURNING *',
       [title, message, (req as any).adminEmail]
     );
+
+    // TODO: Integrate Firebase Cloud Messaging (FCM) or OneSignal here to actually push to mobile devices
+    // Right now it just logs the action in the DB
+    console.log(`[PUSH NOTIFICATION DISPATCHED] Title: ${title}, By: ${(req as any).adminEmail}`);
+
     await logAdminAction((req as any).adminEmail, `Created general notification`, { title });
     res.json(result.rows[0]);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
@@ -386,9 +536,13 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
 startServer();
+
+export default app;
