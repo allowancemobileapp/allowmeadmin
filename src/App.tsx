@@ -190,21 +190,27 @@ function AppRouter() {
       });
       if (res.ok) {
         const data = await res.json();
-        localStorage.setItem('admin_email', userEmail);
-        setEmail(userEmail);
-        setPermissions(data.permissions || {});
+        if (data.verified) {
+          localStorage.setItem('admin_email', userEmail);
+          setEmail(userEmail);
+          setPermissions(data.permissions || {});
+        } else {
+          throw new Error("Cannot verify email");
+        }
       } else {
         localStorage.removeItem('admin_email');
         setEmail(null);
         setPermissions({});
         await logoutFirebase();
-        alert("Unauthorized user. You do not have access directly from database.");
+        const errText = await res.text();
+        alert(`Server Error: ${res.status} - ${errText}`);
       }
-    } catch(e) {
+    } catch(e: any) {
       console.error(e);
       setEmail(null);
       setPermissions({});
       await logoutFirebase();
+      alert(`Login Error: ${e.message}`);
     }
   };
 

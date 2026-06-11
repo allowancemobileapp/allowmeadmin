@@ -348,7 +348,7 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
            UNION ALL
            SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid / 10), 0) as total FROM ticket_purchases WHERE amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE amount_paid > 0
          ) sub
        `);
        total_revenue = parseFloat(revRes.rows[0].total || 0);
@@ -359,7 +359,7 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
            UNION ALL
            SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid / 10), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
          ) sub
        `);
        revenue_today = parseFloat(revTodayRes.rows[0].total || 0);
@@ -394,7 +394,7 @@ app.get('/api/transactions', requireAdmin, async (req, res) => {
       ORDER BY created_at DESC LIMIT 200
     `);
     const ticketRes = await pool.query(`
-      SELECT id::text, 'Ticket' as type, (amount_paid / 10) as amount, status, user_id::text as user_email, created_at 
+      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, user_id::text as user_email, created_at 
       FROM ticket_purchases
       WHERE amount_paid IS NOT NULL AND amount_paid > 0
       ORDER BY created_at DESC LIMIT 200
@@ -425,7 +425,7 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
          UNION ALL
          SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
          UNION ALL
-         SELECT COALESCE(SUM(amount_paid / 10), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+         SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
       ) sub
     `);
     
