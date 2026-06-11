@@ -1,18 +1,16 @@
+// server.ts
 import express from "express";
-import path from "path";
-import { createServer as createViteServer } from "vite";
 import { Pool } from "pg";
 import { google } from "googleapis";
 import dotenv from "dotenv";
 
-dotenv.config();
-
 import { createLegacyRouter } from "./server/legacyRoutes.js";
 
-const app = express();
-const PORT = 3000;
+dotenv.config();
 
+const app = express();
 app.use(express.json());
+
 
 // Database connection
 const envDbUrl = process.env.DATABASE_URL;
