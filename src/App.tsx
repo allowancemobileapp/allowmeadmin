@@ -182,16 +182,23 @@ function AppRouter() {
   const [loading, setLoading] = React.useState(true);
 
   const verifyUser = async (userEmail: string) => {
+    console.log("================================");
+    console.log("VERIFYING USER:", userEmail);
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
 
     try {
+      console.log("Calling /api/auth/verify...");
+
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: userEmail }),
         signal: controller.signal,
       });
+
+      console.log("Response Status:", res.status);
 
       if (!res.ok) {
         localStorage.removeItem('admin_email');
