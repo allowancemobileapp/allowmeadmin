@@ -182,60 +182,69 @@ function AppRouter() {
   const [loading, setLoading] = React.useState(true);
 
   const verifyUser = async (userEmail: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+
     try {
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: userEmail })
+        body: JSON.stringify({ email: userEmail }),
+        signal: controller.signal,
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.verified) {
-          localStorage.setItem('admin_email', userEmail);
-          setEmail(userEmail);
-          setPermissions(data.permissions || {});
-        } else {
-          throw new Error("Cannot verify email");
-        }
-      } else {
+
+      if (!res.ok) {
         localStorage.removeItem('admin_email');
         setEmail(null);
         setPermissions({});
-        await logoutFirebase();
+       await logoutFirebase();
         const errText = await res.text();
-        alert(`Server Error: ${res.status} - ${errText}`);
+       alert(`Server Error: ${res.status} - ${errText}`);
+       return;
       }
-    } catch(e: any) {
+
+      const data = await res.json();
+      if (data.verified) {
+        localStorage.setItem('admin_email', userEmail);
+        setEmail(userEmail);
+        setPermissions(data.permissions || {});
+      } else {
+       throw new Error('Cannot verify email');
+      }
+    } catch (e: any) {
       console.error(e);
+      localStorage.removeItem('admin_email');
       setEmail(null);
       setPermissions({});
       await logoutFirebase();
       alert(`Login Error: ${e.message}`);
+    } finally {
+      clearTimeout(timer);
+      setLoading(false);
     }
   };
 
   useEffect(() => {
     const unsub = auth.onAuthStateChanged(async (user) => {
-      if (user && user.email) {
-        await verifyUser(user.email);
-      } else {
-        localStorage.removeItem('admin_email');
-        setEmail(null);
-        setPermissions({});
+      try {
+        if (user?.email) {
+         await verifyUser(user.email);
+        } else {
+         localStorage.removeItem('admin_email');
+         setEmail(null);
+         setPermissions({});
+        }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
+
     return unsub;
   }, []);
 
   const login = async () => {
     try {
-      const user = await loginWithGoogle();
-      if (user.email) {
-         setLoading(true);
-         await verifyUser(user.email);
-         setLoading(false);
-      }
+      await loginWithGoogle();
     } catch (e: any) {
       alert("Login failed: " + e.message);
     }
