@@ -148,7 +148,7 @@ export default function Combos() {
              portion: item.category.includes("main") ? portionOrQuantity : null,
              quantity: item.category.includes("main") ? 1 : portionOrQuantity,
              price: item.fullPrice, meal_id: item.meal_id
-         })).concat(combo.hasPack ? [{name: 'Pack', category: 'packaging', price: 200, quantity: 1, portion: null}] : []),
+         })).concat(combo.hasPack ? [{name: 'Pack', category: 'packaging', price: 200, quantity: 1, portion: null, meal_id: 0}] : []),
          signature: combo.getSignature(),
          selected: false // requested feature: unselected by default
       })));

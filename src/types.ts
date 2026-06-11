@@ -1,6 +1,7 @@
 export interface Admin {
   id: number;
   email: string;
+  title: string;
   permissions: any;
   added_by: string;
   created_at: string;

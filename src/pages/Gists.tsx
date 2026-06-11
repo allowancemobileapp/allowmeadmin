@@ -6,7 +6,7 @@ export default function Gists() {
   const [gists, setGists] = useState<Gist[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<number | null>(null);
   const [editingGist, setEditingGist] = useState<Gist | null>(null);
-  const { get, post, put } = useApi();
+  const { get, post, put, del } = useApi();
 
   const fetchGists = async () => {
     try {
@@ -128,7 +128,7 @@ export default function Gists() {
           </button>
           
           <h2 className="text-xl text-slate-800 font-bold">
-             {(gistsBySchool[selectedSchool]?.name || (selectedSchool === 0 ? 'Global' : `School #${selectedSchool}`))} Gists
+             {selectedSchool !== null && (gistsBySchool[selectedSchool]?.name || (selectedSchool === 0 ? 'Global' : `School #${selectedSchool}`))} Gists
           </h2>
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -137,7 +137,7 @@ export default function Gists() {
                 <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Active Gists
               </h3>
               <div className="space-y-4">
-                {(gistsBySchool[selectedSchool]?.gists || []).filter((g: any) => g.status === 'active').map((g: any) => (
+                {selectedSchool !== null && (gistsBySchool[selectedSchool]?.gists || []).filter((g: any) => g.status === 'active').map((g: any) => (
                    <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row gap-4">
                       {g.image_url && (
                         <div className="w-full sm:w-24 h-24 shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center overflow-hidden">
@@ -172,7 +172,7 @@ export default function Gists() {
                 <span className="w-2 h-2 rounded-full bg-amber-500"></span> Drafts
               </h3>
               <div className="space-y-4">
-                {(gistsBySchool[selectedSchool]?.gists || []).filter((g: any) => g.status === 'draft').map((g: any) => (
+                {selectedSchool !== null && (gistsBySchool[selectedSchool]?.gists || []).filter((g: any) => g.status === 'draft').map((g: any) => (
                    <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg opacity-75 flex flex-col sm:flex-row gap-4">
                       {g.image_url && (
                         <div className="w-full sm:w-24 h-24 shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center overflow-hidden">

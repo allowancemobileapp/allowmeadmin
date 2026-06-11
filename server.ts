@@ -344,22 +344,22 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
     try {
        const revRes = await pool.query(`
          SELECT SUM(total) as total FROM (
-           SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments
+           SELECT COALESCE(SUM(amount / 100), 0) as total FROM membership_payments
            UNION ALL
            SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid / 10), 0) as total FROM ticket_purchases WHERE amount_paid > 0
          ) sub
        `);
        total_revenue = parseFloat(revRes.rows[0].total || 0);
        
        const revTodayRes = await pool.query(`
          SELECT SUM(total) as total FROM (
-           SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments WHERE created_at >= current_date
+           SELECT COALESCE(SUM(amount / 100), 0) as total FROM membership_payments WHERE created_at >= current_date
            UNION ALL
            SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid / 10), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
          ) sub
        `);
        revenue_today = parseFloat(revTodayRes.rows[0].total || 0);
@@ -383,7 +383,7 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
 app.get('/api/transactions', requireAdmin, async (req, res) => {
   try {
     const memRes = await pool.query(`
-      SELECT id::text, 'Membership' as type, amount as amount, tier as status, user_id::text as user_email, created_at 
+      SELECT id::text, 'Membership' as type, (amount / 100) as amount, tier as status, user_id::text as user_email, created_at 
       FROM membership_payments 
       ORDER BY created_at DESC LIMIT 200
     `);
@@ -394,7 +394,7 @@ app.get('/api/transactions', requireAdmin, async (req, res) => {
       ORDER BY created_at DESC LIMIT 200
     `);
     const ticketRes = await pool.query(`
-      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, user_id::text as user_email, created_at 
+      SELECT id::text, 'Ticket' as type, (amount_paid / 10) as amount, status, user_id::text as user_email, created_at 
       FROM ticket_purchases
       WHERE amount_paid IS NOT NULL AND amount_paid > 0
       ORDER BY created_at DESC LIMIT 200
@@ -421,11 +421,11 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
     `);
     const transactions = await pool.query(`
       SELECT SUM(total) as total FROM (
-         SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments WHERE created_at >= current_date
+         SELECT COALESCE(SUM(amount / 100), 0) as total FROM membership_payments WHERE created_at >= current_date
          UNION ALL
          SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
          UNION ALL
-         SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+         SELECT COALESCE(SUM(amount_paid / 10), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
       ) sub
     `);
     
