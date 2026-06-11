@@ -65,10 +65,10 @@ export default function Gists() {
   const gistsBySchool = (gists || []).reduce((acc, gist) => {
     if (!gist) return acc;
     const sid = gist.school_id || 0; // 0 for global
-    if (!acc[sid]) acc[sid] = [];
-    acc[sid].push(gist);
+    if (!acc[sid]) acc[sid] = { name: (gist as any).school_name || 'Global', gists: [] };
+    acc[sid].gists.push(gist);
     return acc;
-  }, {} as Record<number, Gist[]>);
+  }, {} as Record<number, { name: string, gists: Gist[] }>);
 
   const schoolIds = Array.from(new Set([0, ...Object.keys(gistsBySchool).map(Number)])).sort((a,b) => a-b);
 
@@ -84,7 +84,7 @@ export default function Gists() {
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
               <tr>
-                <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">School ID</th>
+                <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">School Name</th>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Total Active Gists</th>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Total Drafts</th>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Actions</th>
@@ -92,13 +92,14 @@ export default function Gists() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {schoolIds.map((sid) => {
-                const schoolGists = gistsBySchool[sid] || [];
+                const schoolData = gistsBySchool[sid] || { name: sid === 0 ? 'Global' : `School #${sid}`, gists: [] };
+                const schoolGists = schoolData.gists;
                 const active = schoolGists.filter(g => g.status === 'active').length;
                 const draft = schoolGists.filter(g => g.status === 'draft').length;
                 return (
                   <tr key={sid} className="hover:bg-slate-50/50">
                     <td className="px-6 py-4 text-slate-800 font-bold uppercase tracking-wider text-xs">
-                      {sid === 0 ? "Global" : `School #${sid}`}
+                      {schoolData.name}
                     </td>
                     <td className="px-6 py-4 text-emerald-600 font-bold">{active}</td>
                     <td className="px-6 py-4 text-amber-500 font-bold">{draft}</td>
@@ -127,7 +128,7 @@ export default function Gists() {
           </button>
           
           <h2 className="text-xl text-slate-800 font-bold">
-             {selectedSchool === 0 ? 'Global Gists' : `School #${selectedSchool} Gists`}
+             {(gistsBySchool[selectedSchool]?.name || (selectedSchool === 0 ? 'Global' : `School #${selectedSchool}`))} Gists
           </h2>
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -136,23 +137,30 @@ export default function Gists() {
                 <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Active Gists
               </h3>
               <div className="space-y-4">
-                {(gistsBySchool[selectedSchool] || []).filter(g => g.status === 'active').map(g => (
-                   <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                      <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
-                      <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => handleNotify(g.id)}
-                          className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors"
-                        >
-                          Send Push
-                        </button>
-                        <button 
-                          onClick={() => setEditingGist(g)}
-                          className="text-xs font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
-                        >
-                          See Details
-                        </button>
+                {(gistsBySchool[selectedSchool]?.gists || []).filter((g: any) => g.status === 'active').map((g: any) => (
+                   <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row gap-4">
+                      {g.image_url && (
+                        <div className="w-full sm:w-24 h-24 shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center overflow-hidden">
+                          <img src={g.image_url} alt="Gist" className="max-w-full max-h-full object-cover" />
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
+                        <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleNotify(g.id)}
+                            className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors"
+                          >
+                            Send Push
+                          </button>
+                          <button 
+                            onClick={() => setEditingGist(g)}
+                            className="text-xs font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+                          >
+                            See Details
+                          </button>
+                        </div>
                       </div>
                    </div>
                 ))}
@@ -164,16 +172,23 @@ export default function Gists() {
                 <span className="w-2 h-2 rounded-full bg-amber-500"></span> Drafts
               </h3>
               <div className="space-y-4">
-                {(gistsBySchool[selectedSchool] || []).filter(g => g.status === 'draft').map(g => (
-                   <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg opacity-75">
-                      <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
-                      <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
-                      <button 
-                        onClick={() => setEditingGist(g)}
-                        className="text-xs font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
-                      >
-                        See Details
-                      </button>
+                {(gistsBySchool[selectedSchool]?.gists || []).filter((g: any) => g.status === 'draft').map((g: any) => (
+                   <div key={g.id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg opacity-75 flex flex-col sm:flex-row gap-4">
+                      {g.image_url && (
+                        <div className="w-full sm:w-24 h-24 shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center overflow-hidden">
+                          <img src={g.image_url} alt="Gist" className="max-w-full max-h-full object-cover grayscale" />
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <h4 className="font-bold text-slate-800 text-sm">{g.title}</h4>
+                        <p className="text-sm text-slate-600 mt-1 mb-4">{g.content}</p>
+                        <button 
+                          onClick={() => setEditingGist(g)}
+                          className="text-xs font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+                        >
+                          See Details
+                        </button>
+                      </div>
                    </div>
                 ))}
               </div>
@@ -187,12 +202,11 @@ export default function Gists() {
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 my-8">
             <h2 className="text-lg font-bold text-slate-800 mb-4">Gist Details</h2>
             <form onSubmit={handleSaveEdit} className="space-y-4">
-              {(editingGist as any).media_url && (
+              {((editingGist as any).image_url || (editingGist as any).media_url) && (
                 <div className="mb-4">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Attached Media</label>
                   <div className="bg-slate-50 border border-slate-200 p-2 rounded-lg max-h-48 overflow-hidden flex justify-center items-center">
-                    {/* @ts-ignore */}
-                     <img src={(editingGist as any).media_url} alt="Gist Media" className="max-w-full max-h-44 object-contain rounded" onError={(e) => e.currentTarget.style.display = 'none'} />
+                     <img src={(editingGist as any).image_url || (editingGist as any).media_url} alt="Gist Media" className="max-w-full max-h-44 object-contain rounded" onError={(e) => e.currentTarget.style.display = 'none'} />
                   </div>
                 </div>
               )}

@@ -331,7 +331,7 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
     let total_subscribers = 0;
     let new_subscribers_today = 0;
     try {
-       const subsRes = await pool.query("SELECT COUNT(*) FROM profiles WHERE tier != 'free' AND tier IS NOT NULL AND tier != ''");
+       const subsRes = await pool.query("SELECT COUNT(DISTINCT user_id) FROM membership_payments");
        total_subscribers = parseInt(subsRes.rows[0].count);
        const newSubsRes = await pool.query("SELECT COUNT(*) FROM membership_payments WHERE created_at >= current_date");
        // approximated new subscribers today from payments table
@@ -351,7 +351,7 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
            SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE amount_paid > 0
          ) sub
        `);
-       total_revenue = parseFloat(revRes.rows[0].total || 0) / 100;
+       total_revenue = parseFloat(revRes.rows[0].total || 0);
        
        const revTodayRes = await pool.query(`
          SELECT SUM(total) as total FROM (
@@ -362,7 +362,7 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
            SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
          ) sub
        `);
-       revenue_today = parseFloat(revTodayRes.rows[0].total || 0) / 100;
+       revenue_today = parseFloat(revTodayRes.rows[0].total || 0);
     } catch(e) {}
 
     res.json({
@@ -498,7 +498,7 @@ app.put('/api/tickets/:id', requireAdmin, async (req, res) => {
 // -- Gists --
 app.get('/api/gists', requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, title, type as content, school_id, status, created_at, end_date FROM gists ORDER BY created_at DESC');
+    const result = await pool.query('SELECT g.id, g.title, g.type as content, g.school_id, s.name as school_name, g.status, g.created_at, g.end_date, g.image_url, g.image_urls, g.image_path, g.paid, g.amount_paid FROM gists g LEFT JOIN schools s ON g.school_id = s.id ORDER BY g.created_at DESC');
     res.json(result.rows);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
