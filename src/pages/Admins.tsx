@@ -25,11 +25,14 @@ export default function Admins() {
   const [title, setTitle] = useState('');
   const [canCreateUnlimited, setCanCreateUnlimited] = useState(false);
   const [maxSupply, setMaxSupply] = useState(1);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [revokingId, setRevokingId] = useState<number | null>(null);
+
   const [allowedPages, setAllowedPages] = useState<Record<string, boolean>>(() => {
     return PAGE_MODULES.reduce((acc, p) => ({...acc, [p.id]: true}), {});
   });
   const [error, setError] = useState('');
-  const { get, post, del } = useApi();
+  const { get, post, put, del } = useApi();
 
   const fetchAdmins = async () => {
     try {
@@ -44,11 +47,41 @@ export default function Admins() {
     fetchAdmins();
   }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const resetForm = () => {
+    setEmail('');
+    setTitle('');
+    setCanCreateUnlimited(false);
+    setMaxSupply(1);
+    setAllowedPages(PAGE_MODULES.reduce((acc, p) => ({...acc, [p.id]: true}), {}));
+    setEditingId(null);
+    setError('');
+  };
+
+  const handleEditInit = (admin: Admin) => {
+    setEditingId(admin.id);
+    setEmail(admin.email);
+    setTitle(admin.title);
+    
+    const perms = (admin.permissions as any) || {};
+    setCanCreateUnlimited(!!perms.canCreateUnlimited);
+    setMaxSupply(perms.maxSupply || 1);
+    
+    const newAllowedPages: Record<string, boolean> = {};
+    if (perms.all) {
+      PAGE_MODULES.forEach(p => newAllowedPages[p.id] = true);
+    } else if (perms.pages) {
+      PAGE_MODULES.forEach(p => newAllowedPages[p.id] = perms.pages.includes(p.id));
+    } else {
+      PAGE_MODULES.forEach(p => newAllowedPages[p.id] = false);
+    }
+    setAllowedPages(newAllowedPages);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     
-    // Check if at least one page is selected
     const selectedPages = Object.keys(allowedPages).filter(key => allowedPages[key]);
     if (selectedPages.length === 0) {
       return setError('Please select at least one page module to grant access to.');
@@ -60,22 +93,25 @@ export default function Admins() {
         canCreateUnlimited,
         maxSupply
       };
-      await post('/api/admins', { email, title, permissions });
-      setEmail('');
-      setTitle('');
-      setCanCreateUnlimited(false);
-      setMaxSupply(1);
-      setAllowedPages(PAGE_MODULES.reduce((acc, p) => ({...acc, [p.id]: true}), {}));
+      
+      if (editingId) {
+        await put(`/api/admins/${editingId}`, { title, permissions });
+      } else {
+        await post('/api/admins', { email, title, permissions });
+      }
+      
+      resetForm();
       fetchAdmins();
     } catch (e: any) {
       setError(e.message);
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!window.confirm("Are you sure you want to revoke access for this admin?")) return;
+  const confirmDelete = async () => {
+    if (!revokingId) return;
     try {
-      await del(`/api/admins/${id}`);
+      await del(`/api/admins/${revokingId}`);
+      setRevokingId(null);
       fetchAdmins();
     } catch (e: any) {
       alert(e.message);
@@ -93,10 +129,13 @@ export default function Admins() {
         <p className="text-sm text-slate-500 mt-1">Authorize new team members to access the workspace.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Grant Access</h2>
+      <div className={`bg-white border rounded-xl shadow-sm p-6 ${editingId ? 'border-2 border-indigo-500 ring-4 ring-indigo-50' : 'border-slate-200'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{editingId ? 'Edit Access' : 'Grant Access'}</h2>
+          {editingId && <button onClick={resetForm} className="text-xs font-bold text-slate-500 hover:text-slate-800">CANCEL</button>}
+        </div>
         {error && <div className="p-3 mb-4 text-sm bg-red-50 border border-red-200 text-red-600 rounded-md">{error}</div>}
-        <form onSubmit={handleCreate} className="space-y-6 max-w-3xl">
+        <form onSubmit={handleSave} className="space-y-6 max-w-3xl">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
               <label className="font-semibold text-slate-600 text-sm">Email Address</label>
@@ -105,7 +144,8 @@ export default function Admins() {
                 required 
                 value={email} 
                 onChange={e=>setEmail(e.target.value)}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                disabled={!!editingId}
+                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-slate-50" 
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -124,7 +164,7 @@ export default function Admins() {
           <div className="border-t border-slate-100 pt-4">
             <label className="font-semibold text-slate-600 text-sm block mb-3">Coupon Constraints</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="flex items-center gap-2 text-sm text-slate-700 font-medium">
+              <label className="flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
                 <input 
                   type="checkbox" 
                   checked={canCreateUnlimited}
@@ -141,7 +181,7 @@ export default function Admins() {
                     min="1"
                     value={maxSupply}
                     onChange={e => setMaxSupply(parseInt(e.target.value) || 1)}
-                    className="border border-slate-200 rounded px-2 py-1 w-24 text-sm"
+                    className="border border-slate-200 rounded px-2 py-1 w-24 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
               )}
@@ -166,7 +206,7 @@ export default function Admins() {
           </div>
 
           <button type="submit" className="py-2 px-6 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors">
-            AUTHORIZE ACCOUNT
+            {editingId ? 'UPDATE ACCOUNT ACCESS' : 'AUTHORIZE ACCOUNT'}
           </button>
         </form>
       </div>
@@ -179,7 +219,6 @@ export default function Admins() {
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Title</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Coupon Supply</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Permissions (Pages)</th>
-              <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Added By</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Actions</th>
             </tr>
           </thead>
@@ -197,15 +236,24 @@ export default function Admins() {
                   <td className="px-6 py-4 text-slate-500 truncate max-w-xs" title={pages}>
                     {pages}
                   </td>
-                  <td className="px-6 py-4 text-slate-500">{admin.added_by}</td>
                   <td className="px-6 py-4">
-                    <button 
-                      onClick={() => handleDelete(admin.id)}
-                      className="text-xs font-bold text-red-600 hover:text-red-800 transition-colors"
-                      disabled={admin.email === 'allowancemobileapp@gmail.com'}
-                    >
-                      {admin.email === 'allowancemobileapp@gmail.com' ? 'Superadmin' : 'Revoke'}
-                    </button>
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={() => handleEditInit(admin)}
+                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                        disabled={admin.email === 'allowancemobileapp@gmail.com'}
+                      >
+                        {admin.email === 'allowancemobileapp@gmail.com' ? 'Superadmin' : 'Edit'}
+                      </button>
+                      {admin.email !== 'allowancemobileapp@gmail.com' && (
+                        <button 
+                          onClick={() => setRevokingId(admin.id)}
+                          className="text-xs font-bold text-red-600 hover:text-red-800 transition-colors"
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )
@@ -214,6 +262,29 @@ export default function Admins() {
         </table>
         {admins.length === 0 && <div className="p-6 text-center text-slate-400 font-medium">No admins found.</div>}
       </div>
+
+      {revokingId && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Confirm Revocation</h3>
+            <p className="text-slate-600 mb-6">Are you sure you want to completely remove this user's access? This action is permanent and immediate.</p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setRevokingId(null)} 
+                className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmDelete}
+                className="px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+              >
+                Yes, Revoke Access
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

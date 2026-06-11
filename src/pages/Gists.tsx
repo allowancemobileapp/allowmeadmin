@@ -92,7 +92,7 @@ export default function Gists() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {schoolIds.map((sid) => {
-                const schoolGists = gistsBySchool[sid];
+                const schoolGists = gistsBySchool[sid] || [];
                 const active = schoolGists.filter(g => g.status === 'active').length;
                 const draft = schoolGists.filter(g => g.status === 'draft').length;
                 return (

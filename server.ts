@@ -37,6 +37,14 @@ async function initDb() {
           added_by VARCHAR(255),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS company_expenses (
+          id SERIAL PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          reason VARCHAR(255) NOT NULL,
+          amount DECIMAL(12, 2) NOT NULL,
+          expense_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
       CREATE TABLE IF NOT EXISTS system_logs (
           id SERIAL PRIMARY KEY,
           type VARCHAR(50),
@@ -160,6 +168,32 @@ app.post('/api/auth/verify', async (req, res) => {
 // Mount legacy routes
 app.use('/api', requireAdmin, createLegacyRouter(pool));
 
+// -- Expenses --
+app.get('/api/expenses', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM company_expenses ORDER BY expense_date DESC');
+    res.json(result.rows);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/expenses/reasons', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT DISTINCT reason FROM company_expenses WHERE reason IS NOT NULL AND reason != \'\' ORDER BY reason ASC');
+    res.json(result.rows.map(r => r.reason));
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/expenses', requireAdmin, async (req, res) => {
+  try {
+    const { title, reason, amount, expense_date } = req.body;
+    const result = await pool.query(
+      'INSERT INTO company_expenses (title, reason, amount, expense_date) VALUES ($1, $2, $3, $4) RETURNING *',
+      [title, reason, amount, expense_date || new Date().toISOString()]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 // -- Admins --
 app.get('/api/admins', requireAdmin, async (req, res) => {
   try {
@@ -185,6 +219,30 @@ app.post('/api/admins', requireAdmin, async (req, res) => {
     );
     await logAdminAction(adminEmail, `Added new admin ${email}`, { permissions });
     res.status(201).json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/admins/:id', requireAdmin, async (req, res) => {
+  try {
+    const { title, permissions } = req.body;
+    const adminEmail = (req as any).adminEmail;
+    
+    // Only superadmin can edit admins
+    if (adminEmail !== 'allowancemobileapp@gmail.com' && adminEmail !== 'allowancemobielapp@gmail.com') {
+      res.status(403).json({ error: "Only super admin can edit admins." });
+      return;
+    }
+
+    const adminId = req.params.id;
+    const result = await pool.query(
+      'UPDATE admin_users SET title = $1, permissions = $2 WHERE id = $3 RETURNING *',
+      [title, JSON.stringify(permissions), adminId]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({error: "Admin not found"});
+    
+    await logAdminAction((req as any).adminEmail, `Updated admin access for ${result.rows[0].email}`, { permissions });
+    res.json(result.rows[0]);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -284,10 +342,27 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
     let total_revenue = 0;
     let revenue_today = 0;
     try {
-       const revRes = await pool.query("SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments");
-       total_revenue = parseFloat(revRes.rows[0].total) / 100;
-       const revTodayRes = await pool.query("SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments WHERE created_at >= current_date");
-       revenue_today = parseFloat(revTodayRes.rows[0].total) / 100;
+       const revRes = await pool.query(`
+         SELECT SUM(total) as total FROM (
+           SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments
+           UNION ALL
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE amount_paid > 0
+           UNION ALL
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE amount_paid > 0
+         ) sub
+       `);
+       total_revenue = parseFloat(revRes.rows[0].total || 0) / 100;
+       
+       const revTodayRes = await pool.query(`
+         SELECT SUM(total) as total FROM (
+           SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments WHERE created_at >= current_date
+           UNION ALL
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
+           UNION ALL
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+         ) sub
+       `);
+       revenue_today = parseFloat(revTodayRes.rows[0].total || 0) / 100;
     } catch(e) {}
 
     res.json({
@@ -307,12 +382,30 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
 // -- Transactions --
 app.get('/api/transactions', requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT id, 'Membership' as type, amount as amount, tier as status, user_id as user_email, created_at 
+    const memRes = await pool.query(`
+      SELECT id::text, 'Membership' as type, amount as amount, tier as status, user_id::text as user_email, created_at 
       FROM membership_payments 
-      ORDER BY created_at DESC LIMIT 500
+      ORDER BY created_at DESC LIMIT 200
     `);
-    res.json(result.rows);
+    const gistRes = await pool.query(`
+      SELECT id::text, 'Gist' as type, amount_paid as amount, status, user_id::text as user_email, created_at 
+      FROM gists
+      WHERE amount_paid IS NOT NULL AND amount_paid > 0
+      ORDER BY created_at DESC LIMIT 200
+    `);
+    const ticketRes = await pool.query(`
+      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, user_id::text as user_email, created_at 
+      FROM ticket_purchases
+      WHERE amount_paid IS NOT NULL AND amount_paid > 0
+      ORDER BY created_at DESC LIMIT 200
+    `);
+    
+    // Combine and sort
+    const all = [...memRes.rows, ...gistRes.rows, ...ticketRes.rows]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 500);
+
+    res.json(all);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -327,9 +420,13 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
         AND created_at >= date_trunc('month', CURRENT_DATE)
     `);
     const transactions = await pool.query(`
-      SELECT COALESCE(SUM(amount), 0) as total 
-      FROM membership_payments 
-      WHERE created_at >= current_date
+      SELECT SUM(total) as total FROM (
+         SELECT COALESCE(SUM(amount), 0) as total FROM membership_payments WHERE created_at >= current_date
+         UNION ALL
+         SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
+         UNION ALL
+         SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+      ) sub
     `);
     
     res.json({
