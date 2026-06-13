@@ -20,8 +20,10 @@ const connectionString = (envDbUrl && !envDbUrl.includes("localhost") && !envDbU
   ? envDbUrl
   : "postgresql://postgres.quuazutreaitqoquzolg:James2002eze%23@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
 
+const isLocalDb = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");
 const pool = new Pool({
-  connectionString
+  connectionString,
+  ssl: isLocalDb ? false : { rejectUnauthorized: false }
 });
 
 // Initialize database schema (graceful if DB not alive)
