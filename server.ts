@@ -21,8 +21,12 @@ const connectionString = (envDbUrl && !envDbUrl.includes("localhost") && !envDbU
   : "postgresql://postgres.quuazutreaitqoquzolg:James2002eze%23@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
 
 const isLocalDb = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");
+
+// Vercel/Supabase may append ?sslmode=require which overrides pg's ssl property
+const cleanConnectionString = connectionString.split('?')[0];
+
 const pool = new Pool({
-  connectionString,
+  connectionString: cleanConnectionString,
   ssl: isLocalDb ? false : { rejectUnauthorized: false }
 });
 
@@ -619,31 +623,30 @@ app.post('/api/coupons', requireAdmin, async (req, res) => {
   }
 });
 
-// Vite Middleware
-async function startServer() {
-  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
-    const viteModule = "vite";
-    const { createServer: createViteServer } = await import(/* @vite-ignore */ viteModule);
+// Vite Middleware and Dev Server Output (local only)
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+  import("vite").then(async ({ createServer: createViteServer }) => {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else if (!process.env.VERCEL) {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  if (!process.env.VERCEL) {
+    
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
-  }
+  }).catch(err => console.error("Failed to start Vite dev server:", err));
+} else if (!process.env.VERCEL) {
+  // Production fallback for local testing (not Vercel)
+  const distPath = path.join(process.cwd(), 'dist');
+  app.use(express.static(distPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+  
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Production server running on http://localhost:${PORT}`);
+  });
 }
-
-startServer();
 
 export default app;
