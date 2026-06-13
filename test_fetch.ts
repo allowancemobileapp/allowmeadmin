@@ -1,0 +1,1 @@
+const req = await fetch('http://localhost:3000/api/auth/verify', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({email: 'allowancemobileapp@gmail.com' }) }); console.log(await req.text());

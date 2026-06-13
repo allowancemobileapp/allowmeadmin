@@ -1,5 +1,6 @@
 // server.ts
 import express from "express";
+import path from "path";
 import { Pool } from "pg";
 import { google } from "googleapis";
 import dotenv from "dotenv";
@@ -9,6 +10,7 @@ import { createLegacyRouter } from "./server/legacyRoutes.js";
 dotenv.config();
 
 const app = express();
+const PORT = 3000;
 app.use(express.json());
 
 
@@ -150,7 +152,7 @@ app.post('/api/auth/verify', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email required" });
     const lowerEmail = email.toLowerCase();
-    if (lowerEmail === 'allowancemobileapp@gmail.com' || lowerEmail === 'allowancemobielapp@gmail.com') return res.json({ verified: true, title: 'Super Admin' });
+    if (lowerEmail === 'allowancemobileapp@gmail.com' || lowerEmail === 'allowancemobielapp@gmail.com') return res.json({ verified: true, title: 'Super Admin', permissions: { all: true } });
     
     const result = await pool.query('SELECT title, permissions FROM admin_users WHERE email = $1', [lowerEmail]);
     if (result.rows.length > 0) {
@@ -617,13 +619,15 @@ app.post('/api/coupons', requireAdmin, async (req, res) => {
 
 // Vite Middleware
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    const viteModule = "vite";
+    const { createServer: createViteServer } = await import(/* @vite-ignore */ viteModule);
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
