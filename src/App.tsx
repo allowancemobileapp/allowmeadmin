@@ -26,8 +26,8 @@ export function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
 }
 
-export const AuthContext = React.createContext<{email: string | null; permissions: any; login: ()=>void; logout: ()=>void}>({
-  email: null, permissions: {}, login: ()=>{}, logout: ()=>{}
+export const AuthContext = React.createContext<{email: string | null; permissions: any; title: string; login: ()=>void; logout: ()=>void}>({
+  email: null, permissions: {}, title: '', login: ()=>{}, logout: ()=>{}
 });
 
 import Admins from './pages/Admins';
@@ -52,7 +52,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
   
   const allLinks = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, id: 'dashboard' },
-    { to: '/countries', label: 'Countries', icon: Globe, id: 'dashboard' }, // usually wrapped in dashboard logic
+    { to: '/countries', label: 'Countries', icon: Globe, id: 'countries' },
     { to: '/schools', label: 'Schools', icon: GraduationCap, id: 'schools' },
     { to: '/vendors', label: 'Vendors', icon: Store, id: 'vendors' },
     { to: '/meals', label: 'Meals (Master)', icon: UtensilsCrossed, id: 'meals' },
@@ -129,6 +129,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
 
 function Layout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  const { title } = React.useContext(AuthContext);
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden text-sm">
@@ -139,7 +140,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             <button className="md:hidden text-slate-600" onClick={() => setIsSidebarOpen(true)}>
                <Menu className="w-5 h-5" />
             </button>
-            <h1 className="text-lg font-semibold text-slate-800 hidden md:block">CEO Control Panel</h1>
+            <h1 className="text-lg font-semibold text-slate-800 hidden md:block">{title ? `${title} Control Panel` : 'Control Panel'}</h1>
           </div>
           <div className="flex gap-4 items-center text-xs font-medium">
             <span className="bg-slate-100 px-2 py-1 rounded text-slate-600 hidden sm:block">Uptime: 99.9%</span>
@@ -179,6 +180,7 @@ function Login() {
 function AppRouter() {
   const [email, setEmail] = React.useState<string | null>(null);
   const [permissions, setPermissions] = React.useState<any>({});
+  const [title, setTitle] = React.useState<string>('');
   const [loading, setLoading] = React.useState(true);
 
   const verifyUser = async (userEmail: string) => {
@@ -215,6 +217,7 @@ function AppRouter() {
         localStorage.setItem('admin_email', userEmail);
         setEmail(userEmail);
         setPermissions(data.permissions || {});
+        setTitle(data.title || '');
       } else {
        throw new Error('Cannot verify email');
       }
@@ -223,6 +226,7 @@ function AppRouter() {
       localStorage.removeItem('admin_email');
       setEmail(null);
       setPermissions({});
+      setTitle('');
       await logoutFirebase();
       alert(`Login Error: ${e.message}`);
     } finally {
@@ -240,6 +244,7 @@ function AppRouter() {
          localStorage.removeItem('admin_email');
          setEmail(null);
          setPermissions({});
+         setTitle('');
         }
       } finally {
         setLoading(false);
@@ -266,11 +271,11 @@ function AppRouter() {
   }
 
   if (!email) {
-    return <AuthContext.Provider value={{ email, permissions, login, logout }}><Login /></AuthContext.Provider>;
+    return <AuthContext.Provider value={{ email, permissions, title, login, logout }}><Login /></AuthContext.Provider>;
   }
 
   return (
-    <AuthContext.Provider value={{ email, permissions, login, logout }}>
+    <AuthContext.Provider value={{ email, permissions, title, login, logout }}>
       <BrowserRouter>
         <Layout>
           <Routes>

@@ -9,8 +9,11 @@ import { createLegacyRouter } from "./server/legacyRoutes.js";
 
 dotenv.config();
 
+import cors from "cors";
+
 const app = express();
 const PORT = 3000;
+app.use(cors());
 app.use(express.json());
 
 
@@ -280,7 +283,18 @@ app.get('/api/logs/admin', requireAdmin, async (req, res) => {
 
 app.get('/api/logs/app', requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM system_logs WHERE type = 'app' ORDER BY created_at DESC LIMIT 500");
+    const result = await pool.query(`
+      SELECT 
+        al.id, 
+        COALESCE(p.username, 'anonymous') as user_email, 
+        al.action_type as action_summary, 
+        al.created_at, 
+        jsonb_build_object('user_id', al.user_id, 'log_details', al.details) as details 
+      FROM activity_logs al 
+      LEFT JOIN profiles p ON (al.user_id::text = p.id::text OR (al.details->'extra'->>'user_id')::text = p.id::text)
+      ORDER BY al.created_at DESC 
+      LIMIT 1000
+    `);
     res.json(result.rows);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });

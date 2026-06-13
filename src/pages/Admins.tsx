@@ -4,6 +4,7 @@ import { Admin } from '../types';
 
 const PAGE_MODULES = [
   { id: 'dashboard', label: 'System Overview' },
+  { id: 'countries', label: 'Countries' },
   { id: 'schools', label: 'Schools' },
   { id: 'meals', label: 'Master Meals' },
   { id: 'vendors', label: 'Vendors' },
