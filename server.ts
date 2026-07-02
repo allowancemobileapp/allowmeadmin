@@ -6,6 +6,7 @@ import { google } from "googleapis";
 import dotenv from "dotenv";
 
 import { createLegacyRouter } from "./server/legacyRoutes.js";
+import { createLibraryRouter } from "./server/libraryRoutes.js";
 
 dotenv.config();
 
@@ -176,6 +177,7 @@ app.post('/api/auth/verify', async (req, res) => {
 
 // Mount legacy routes
 app.use('/api', requireAdmin, createLegacyRouter(pool));
+app.use('/api/library', requireAdmin, createLibraryRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {

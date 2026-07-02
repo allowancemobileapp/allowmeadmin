@@ -71,6 +71,7 @@ export default function Meals() {
     setSectionId(m.section_id?.toString() || '');
     setCategoryId(m.category_id?.toString() || '');
     setCalories(m.calorie_count?.toString() || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {

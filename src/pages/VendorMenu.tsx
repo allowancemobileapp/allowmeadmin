@@ -14,7 +14,7 @@ const SECTIONS = [
 
 export default function VendorMenu() {
   const { vendorId } = useParams();
-  const { get, post, del } = useApi();
+  const { get, post, del, put } = useApi();
   const [vendor, setVendor] = useState<any>(null);
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [masterMeals, setMasterMeals] = useState<any[]>([]);
@@ -26,6 +26,8 @@ export default function VendorMenu() {
   const [selectedMealId, setSelectedMealId] = useState('');
   const [quantityPortion, setQuantityPortion] = useState('');
   const [price, setPrice] = useState('');
+
+  const [editingItem, setEditingItem] = useState<any>(null);
 
   const fetchData = async () => {
     try {
@@ -48,16 +50,26 @@ export default function VendorMenu() {
     fetchData();
   }, [vendorId]);
 
-  const handleAdd = async (e: React.FormEvent) => {
+  const handleAddOrEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMealId) return alert('Select a meal');
     try {
-      await post('/api/vendor_menus', {
-        vendor_id: parseInt(vendorId!),
-        meal_id: parseInt(selectedMealId),
-        quantity_portion: quantityPortion,
-        price: parseFloat(price)
-      });
+      if (editingItem) {
+        await put(`/api/vendor_menus/${editingItem.id}`, {
+          vendor_id: parseInt(vendorId!),
+          meal_id: parseInt(selectedMealId),
+          quantity_portion: quantityPortion,
+          price: parseFloat(price)
+        });
+        setEditingItem(null);
+      } else {
+        await post('/api/vendor_menus', {
+          vendor_id: parseInt(vendorId!),
+          meal_id: parseInt(selectedMealId),
+          quantity_portion: quantityPortion,
+          price: parseFloat(price)
+        });
+      }
       setSelectedMealId('');
       setQuantityPortion(activeSection === 1 ? 'Half' : '1');
       setPrice('');
@@ -65,6 +77,21 @@ export default function VendorMenu() {
     } catch (e: any) {
       alert(e.message);
     }
+  };
+
+  const handleStartEdit = (item: any) => {
+    setEditingItem(item);
+    setSelectedMealId(item.meal_id?.toString() || '');
+    setQuantityPortion(item.quantity_portion || '');
+    setPrice(item.price?.toString() || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItem(null);
+    setSelectedMealId('');
+    setQuantityPortion(activeSection === 1 ? 'Half' : '1');
+    setPrice('');
   };
 
   const handleDelete = async (id: number) => {
@@ -111,8 +138,11 @@ export default function VendorMenu() {
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 max-w-3xl">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Add {SECTIONS.find(s=>s.id===activeSection)?.name} Item</h2>
-        <form onSubmit={handleAdd} className="flex gap-4 items-end">
+        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 flex justify-between items-center">
+          {editingItem ? `Edit ${SECTIONS.find(s=>s.id===activeSection)?.name} Item` : `Add ${SECTIONS.find(s=>s.id===activeSection)?.name} Item`}
+          {editingItem && <button type="button" onClick={handleCancelEdit} className="text-xs text-red-500">Cancel Edit</button>}
+        </h2>
+        <form onSubmit={handleAddOrEdit} className="flex gap-4 items-end">
           <div className="flex flex-col gap-1 flex-1">
             <label className="font-semibold text-slate-600 text-sm">Select Master Meal</label>
             <select value={selectedMealId} onChange={e=>setSelectedMealId(e.target.value)} className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500">
@@ -144,7 +174,7 @@ export default function VendorMenu() {
             />
           </div>
           <button type="submit" className="py-2 px-4 h-[42px] bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors">
-            ADD
+            {editingItem ? 'SAVE' : 'ADD'}
           </button>
         </form>
       </div>
@@ -165,7 +195,8 @@ export default function VendorMenu() {
                 <td className="px-6 py-4 text-slate-800 font-medium">{item.meal_name}</td>
                 <td className="px-6 py-4 text-slate-600">{item.quantity_portion}</td>
                 <td className="px-6 py-4 text-indigo-700 font-bold font-mono">₦{parseFloat(item.price).toFixed(2)}</td>
-                <td className="px-6 py-4">
+                <td className="px-6 py-4 flex gap-3">
+                  <button onClick={() => handleStartEdit(item)} className="text-xs font-bold text-indigo-600 hover:underline">Edit</button>
                   <button onClick={() => handleDelete(item.id)} className="text-xs font-bold text-red-600 hover:underline">Delete</button>
                 </td>
               </tr>

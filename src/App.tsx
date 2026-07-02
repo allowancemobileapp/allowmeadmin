@@ -15,6 +15,7 @@ import {
   Store,
   UtensilsCrossed,
   Package,
+  BookOpen,
   Menu,
   X
 } from 'lucide-react';
@@ -44,6 +45,7 @@ import Vendors from './pages/Vendors';
 import VendorMenu from './pages/VendorMenu';
 import Meals from './pages/Meals';
 import Combos from './pages/Combos';
+import Library from './pages/Library';
 import Metadata from './pages/Metadata';
 
 function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: boolean) => void }) {
@@ -57,6 +59,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
     { to: '/vendors', label: 'Vendors', icon: Store, id: 'vendors' },
     { to: '/meals', label: 'Meals (Master)', icon: UtensilsCrossed, id: 'meals' },
     { to: '/combos', label: 'Vendor Combos', icon: Package, id: 'combos' },
+    { to: '/library', label: 'Academic Library', icon: BookOpen, id: 'library' },
     { to: '/admins', label: 'Account Permissions', icon: Users, id: 'admins' },
     { to: '/logs', label: 'Unified Logs', icon: Activity, id: 'logs' },
     { to: '/transactions', label: 'Transactions', icon: CreditCard, id: 'transactions' },
@@ -286,6 +289,7 @@ function AppRouter() {
             <Route path="/vendors/:vendorId/menu" element={<VendorMenu />} />
             <Route path="/meals" element={<Meals />} />
             <Route path="/combos" element={<Combos />} />
+            <Route path="/library" element={<Library />} />
             <Route path="/admins" element={<Admins />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/transactions" element={<Transactions />} />
