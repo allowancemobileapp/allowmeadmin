@@ -16,6 +16,7 @@ import {
   UtensilsCrossed,
   Package,
   BookOpen,
+  UserSquare,
   Menu,
   X
 } from 'lucide-react';
@@ -47,6 +48,7 @@ import Meals from './pages/Meals';
 import Combos from './pages/Combos';
 import Library from './pages/Library';
 import Metadata from './pages/Metadata';
+import UsersPage from './pages/UsersPage';
 
 function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: boolean) => void }) {
   const location = useLocation();
@@ -54,6 +56,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
   
   const allLinks = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, id: 'dashboard' },
+    { to: '/users', label: 'User Management', icon: UserSquare, id: 'users' },
     { to: '/countries', label: 'Countries', icon: Globe, id: 'countries' },
     { to: '/schools', label: 'Schools', icon: GraduationCap, id: 'schools' },
     { to: '/vendors', label: 'Vendors', icon: Store, id: 'vendors' },
@@ -290,6 +293,7 @@ function AppRouter() {
             <Route path="/meals" element={<Meals />} />
             <Route path="/combos" element={<Combos />} />
             <Route path="/library" element={<Library />} />
+            <Route path="/users" element={<UsersPage />} />
             <Route path="/admins" element={<Admins />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/transactions" element={<Transactions />} />

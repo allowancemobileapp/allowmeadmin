@@ -16,6 +16,7 @@ const PAGE_MODULES = [
   { id: 'notifications', label: 'Broadcasts' },
   { id: 'transactions', label: 'Transactions' },
   { id: 'library', label: 'E-Library' },
+  { id: 'users', label: 'User Management' },
   { id: 'logs', label: 'App Logs' },
   { id: 'admins', label: 'Account Permissions' },
   { id: 'metadata', label: 'System Metadata' },

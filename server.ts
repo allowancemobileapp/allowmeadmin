@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 
 import { createLegacyRouter } from "./server/legacyRoutes.js";
 import { createLibraryRouter } from "./server/libraryRoutes.js";
+import { createUserRouter } from "./server/userRoutes.js";
 
 dotenv.config();
 
@@ -178,6 +179,7 @@ app.post('/api/auth/verify', async (req, res) => {
 // Mount legacy routes
 app.use('/api', requireAdmin, createLegacyRouter(pool));
 app.use('/api/library', requireAdmin, createLibraryRouter(pool));
+app.use('/api/users', requireAdmin, createUserRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {
