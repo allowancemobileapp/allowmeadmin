@@ -8,6 +8,7 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [sort, setSort] = useState('oldest');
   
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -19,7 +20,7 @@ export default function UsersPage() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const data = await get<any[]>('/api/users');
+      const data = await get<any[]>(`/api/users?sort=${sort}`);
       setUsers(data || []);
     } catch (e: any) {
       setError(e.message);
@@ -30,7 +31,7 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [sort]);
 
   const handleUserClick = async (user: any) => {
     setSelectedUser(user);
@@ -112,15 +113,25 @@ export default function UsersPage() {
           <p className="text-slate-500 mt-1">View all users, inspect profiles, and manage content.</p>
         </div>
         
-        <div className="relative">
-          <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input 
-            type="text"
-            placeholder="Search ID, Name, Username..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full sm:w-64 pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-          />
+        <div className="flex items-center gap-3 relative">
+          <select 
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+            className="pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-medium text-slate-700"
+          >
+            <option value="oldest">Oldest First</option>
+            <option value="newest">Newest First</option>
+          </select>
+          <div className="relative flex-1 sm:flex-none">
+            <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input 
+              type="text"
+              placeholder="Search ID, Name, Username..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full sm:w-64 pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+            />
+          </div>
         </div>
       </div>
 
@@ -290,6 +301,17 @@ export default function UsersPage() {
                             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">School:</p>
                             <span className="text-sm font-medium text-slate-700">{selectedUser.school_name || 'N/A'}</span>
                           </div>
+                          {selectedUser.referrer_username && (
+                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-200/50">
+                              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Referred By:</p>
+                              <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                                @{selectedUser.referrer_username}
+                              </span>
+                              {selectedUser.referrer_full_name && (
+                                <span className="text-xs text-slate-500 ml-1">({selectedUser.referrer_full_name})</span>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

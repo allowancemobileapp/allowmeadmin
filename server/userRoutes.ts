@@ -12,19 +12,29 @@ export function createUserRouter(pool: any) {
   };
 
   router.get('/', handleReq(async (req: any, res: any) => {
+    const { sort } = req.query;
+    const order = sort === 'newest' ? 'DESC' : 'ASC';
+
     const result = await pool.query(`
-      SELECT 
-        id, username, full_name, email, avatar_url, subscription_tier, created_at, school_name, bio,
-        ROW_NUMBER() OVER (ORDER BY created_at ASC) as rank
-      FROM profiles 
-      ORDER BY created_at ASC
+      SELECT * FROM (
+        SELECT 
+          id, username, full_name, email, avatar_url, subscription_tier, created_at, school_name, bio,
+          ROW_NUMBER() OVER (ORDER BY created_at ASC) as rank
+        FROM profiles 
+      ) as ranked_profiles
+      ORDER BY created_at ${order}
     `);
     res.json(result.rows);
   }));
 
   router.get('/:id', handleReq(async (req: any, res: any) => {
     const { id } = req.params;
-    const profileRes = await pool.query('SELECT * FROM profiles WHERE id = $1', [id]);
+    const profileRes = await pool.query(`
+      SELECT p.*, r.username as referrer_username, r.full_name as referrer_full_name 
+      FROM profiles p
+      LEFT JOIN profiles r ON p.referred_by = r.id
+      WHERE p.id = $1
+    `, [id]);
     if (profileRes.rows.length === 0) return res.status(404).json({error: 'User not found'});
     
     const profile = profileRes.rows[0];
