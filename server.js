@@ -1,5 +1,6 @@
 // server.ts
 import express2 from "express";
+import path from "path";
 import { Pool } from "pg";
 import { google } from "googleapis";
 import dotenv from "dotenv";
@@ -228,14 +229,363 @@ function createLegacyRouter(pool2) {
   return router;
 }
 
+// server/libraryRoutes.ts
+import { Router } from "express";
+import multer from "multer";
+var storage = multer.memoryStorage();
+var upload = multer({ storage });
+function createLibraryRouter(pool2) {
+  const router = Router();
+  const logAdminAction2 = async (req, action, details) => {
+    try {
+      const adminEmail = req.adminEmail || "unknown";
+      await pool2.query(
+        "INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)",
+        ["admin", adminEmail, action, JSON.stringify(details)]
+      );
+    } catch (e) {
+      console.error("Failed to log admin action", e);
+    }
+  };
+  const handleReq = (handler) => async (req, res) => {
+    try {
+      await handler(req, res);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  };
+  router.post("/upload", upload.single("file"), handleReq(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabaseUrl = "https://quuazutreaitqoquzolg.supabase.co";
+    const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1dWF6dXRyZWFpdHFvcXV6b2xnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDA4OTYxOCwiZXhwIjoyMDU5NjY1NjE4fQ.pQoriaaK_dG1Z9nQUWdCYvFtugulM7ir9OjTukIhDGs";
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const fileName = `${Date.now()}_${req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+    const { data, error } = await supabase.storage.from("library-materials").upload(fileName, req.file.buffer, {
+      contentType: req.file.mimetype,
+      upsert: true
+    });
+    if (error) {
+      throw new Error(`Failed to upload to Supabase: ${error.message}`);
+    }
+    const { data: publicUrlData } = supabase.storage.from("library-materials").getPublicUrl(fileName);
+    res.json({ url: publicUrlData.publicUrl });
+  }));
+  router.get("/colleges", handleReq(async (req, res) => {
+    const { school_id } = req.query;
+    let query = "SELECT c.*, s.name as school_name FROM colleges c JOIN schools s ON c.school_id = s.id";
+    const params = [];
+    if (school_id) {
+      query += " WHERE c.school_id = $1";
+      params.push(school_id);
+    }
+    const result = await pool2.query(query, params);
+    res.json(result.rows);
+  }));
+  router.post("/colleges", handleReq(async (req, res) => {
+    const { school_id, name } = req.body;
+    const result = await pool2.query(
+      "INSERT INTO colleges (school_id, name) VALUES ($1, $2) RETURNING *",
+      [school_id, name]
+    );
+    await logAdminAction2(req, `Created college ${name}`, { school_id, name });
+    res.json(result.rows[0]);
+  }));
+  router.put("/colleges/:id", handleReq(async (req, res) => {
+    const { school_id, name } = req.body;
+    const result = await pool2.query(
+      "UPDATE colleges SET school_id = $1, name = $2 WHERE id = $3 RETURNING *",
+      [school_id, name, req.params.id]
+    );
+    await logAdminAction2(req, `Updated college ${req.params.id}`, { school_id, name });
+    res.json(result.rows[0]);
+  }));
+  router.delete("/colleges/:id", handleReq(async (req, res) => {
+    await pool2.query("DELETE FROM colleges WHERE id = $1", [req.params.id]);
+    await logAdminAction2(req, `Deleted college ${req.params.id}`, {});
+    res.json({ success: true });
+  }));
+  router.get("/courses", handleReq(async (req, res) => {
+    const { college_id } = req.query;
+    let query = "SELECT c.*, col.name as college_name, s.name as school_name FROM courses c JOIN colleges col ON c.college_id = col.id JOIN schools s ON col.school_id = s.id";
+    const params = [];
+    if (college_id) {
+      query += " WHERE c.college_id = $1";
+      params.push(college_id);
+    }
+    const result = await pool2.query(query, params);
+    res.json(result.rows);
+  }));
+  router.post("/courses", handleReq(async (req, res) => {
+    const { college_id, course_code, course_title, course_description } = req.body;
+    const result = await pool2.query(
+      "INSERT INTO courses (college_id, course_code, course_title, course_description) VALUES ($1, $2, $3, $4) RETURNING *",
+      [college_id, course_code, course_title, course_description]
+    );
+    await logAdminAction2(req, `Created course ${course_code}`, { college_id, course_code, course_title });
+    res.json(result.rows[0]);
+  }));
+  router.put("/courses/:id", handleReq(async (req, res) => {
+    const { college_id, course_code, course_title, course_description } = req.body;
+    const result = await pool2.query(
+      "UPDATE courses SET college_id = $1, course_code = $2, course_title = $3, course_description = $4 WHERE id = $5 RETURNING *",
+      [college_id, course_code, course_title, course_description, req.params.id]
+    );
+    await logAdminAction2(req, `Updated course ${req.params.id}`, { college_id, course_code, course_title });
+    res.json(result.rows[0]);
+  }));
+  router.delete("/courses/:id", handleReq(async (req, res) => {
+    await pool2.query("DELETE FROM courses WHERE id = $1", [req.params.id]);
+    await logAdminAction2(req, `Deleted course ${req.params.id}`, {});
+    res.json({ success: true });
+  }));
+  router.get("/library_materials", handleReq(async (req, res) => {
+    const { course_id } = req.query;
+    let query = "SELECT m.*, c.course_code FROM library_materials m JOIN courses c ON m.course_id = c.id";
+    const params = [];
+    if (course_id) {
+      query += " WHERE m.course_id = $1";
+      params.push(course_id);
+    }
+    const result = await pool2.query(query, params);
+    res.json(result.rows);
+  }));
+  router.post("/library_materials", handleReq(async (req, res) => {
+    const { course_id, material_type, title, academic_year, semester, file_url, price } = req.body;
+    const result = await pool2.query(
+      "INSERT INTO library_materials (course_id, material_type, title, academic_year, semester, file_url, price) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+      [course_id, material_type, title, academic_year, semester, file_url, price || 0]
+    );
+    await logAdminAction2(req, `Created library material ${title}`, { course_id, material_type });
+    res.json(result.rows[0]);
+  }));
+  router.put("/library_materials/:id", handleReq(async (req, res) => {
+    const { course_id, material_type, title, academic_year, semester, file_url, price } = req.body;
+    const result = await pool2.query(
+      "UPDATE library_materials SET course_id = $1, material_type = $2, title = $3, academic_year = $4, semester = $5, file_url = $6, price = $7 WHERE id = $8 RETURNING *",
+      [course_id, material_type, title, academic_year, semester, file_url, price || 0, req.params.id]
+    );
+    await logAdminAction2(req, `Updated library material ${req.params.id}`, { course_id, material_type, title });
+    res.json(result.rows[0]);
+  }));
+  router.delete("/library_materials/:id", handleReq(async (req, res) => {
+    await pool2.query("DELETE FROM library_materials WHERE id = $1", [req.params.id]);
+    await logAdminAction2(req, `Deleted library material ${req.params.id}`, {});
+    res.json({ success: true });
+  }));
+  router.get("/quiz_questions", handleReq(async (req, res) => {
+    const { material_id, course_id } = req.query;
+    let query = "SELECT * FROM quiz_questions WHERE 1=1";
+    const params = [];
+    if (material_id) {
+      params.push(material_id);
+      query += ` AND material_id = $${params.length}`;
+    }
+    if (course_id) {
+      params.push(course_id);
+      query += ` AND course_id = $${params.length}`;
+    }
+    const result = await pool2.query(query, params);
+    res.json(result.rows);
+  }));
+  router.post("/quiz_questions/generate", handleReq(async (req, res) => {
+    const { course_id, material_id, file_url } = req.body;
+    const { GoogleGenAI, Type } = await import("@google/genai");
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    let contents = [
+      { text: `You are an expert professor. Generate a 50-question pop quiz based on the course material provided. For each question provide exactly 3 options (option_a, option_b, option_c) and one correct_option ('A', 'B', or 'C').` }
+    ];
+    if (file_url) {
+      const fileResponse = await fetch(file_url);
+      const arrayBuffer = await fileResponse.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const base64 = buffer.toString("base64");
+      const mimeType = fileResponse.headers.get("content-type") || "application/pdf";
+      contents.push({
+        inlineData: {
+          mimeType,
+          data: base64
+        }
+      });
+    }
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              question_text: { type: Type.STRING },
+              option_a: { type: Type.STRING },
+              option_b: { type: Type.STRING },
+              option_c: { type: Type.STRING },
+              correct_option: { type: Type.STRING, enum: ["A", "B", "C"] }
+            },
+            required: ["question_text", "option_a", "option_b", "option_c", "correct_option"]
+          }
+        }
+      }
+    });
+    const questionsText = response.text || "[]";
+    const questions = JSON.parse(questionsText.trim());
+    if (questions.length > 0) {
+      await pool2.query("DELETE FROM quiz_questions WHERE material_id = $1", [material_id]);
+      const values = questions.map(
+        (q) => `(${course_id}, ${material_id}, '${q.question_text.replace(/'/g, "''")}', '${q.option_a.replace(/'/g, "''")}', '${q.option_b.replace(/'/g, "''")}', '${q.option_c.replace(/'/g, "''")}', '${q.correct_option}')`
+      ).join(",");
+      const result = await pool2.query(`INSERT INTO quiz_questions (course_id, material_id, question_text, option_a, option_b, option_c, correct_option) VALUES ${values} RETURNING *`);
+      await logAdminAction2(req, `Generated ${questions.length} quiz questions for material ${material_id}`, { course_id, count: questions.length });
+      return res.json(result.rows);
+    }
+    res.json([]);
+  }));
+  router.delete("/quiz_questions/:id", handleReq(async (req, res) => {
+    await pool2.query("DELETE FROM quiz_questions WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  }));
+  router.delete("/quiz_questions/material/:material_id", handleReq(async (req, res) => {
+    await pool2.query("DELETE FROM quiz_questions WHERE material_id = $1", [req.params.material_id]);
+    res.json({ success: true });
+  }));
+  return router;
+}
+
+// server/userRoutes.ts
+import { Router as Router2 } from "express";
+function createUserRouter(pool2) {
+  const router = Router2();
+  const handleReq = (handler) => async (req, res) => {
+    try {
+      await handler(req, res);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  };
+  const logAdminAction2 = async (req, action, details) => {
+    try {
+      const adminEmail = req.adminEmail || "unknown";
+      await pool2.query(
+        "INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)",
+        ["admin", adminEmail, action, JSON.stringify(details)]
+      );
+    } catch (e) {
+      console.error("Failed to log admin action", e);
+    }
+  };
+  router.get("/", handleReq(async (req, res) => {
+    const { sort } = req.query;
+    const order = sort === "newest" ? "DESC" : "ASC";
+    const result = await pool2.query(`
+      SELECT * FROM (
+        SELECT 
+          id, username, full_name, email, avatar_url, subscription_tier, created_at, school_name, bio,
+          ROW_NUMBER() OVER (ORDER BY created_at ASC) as rank
+        FROM profiles 
+      ) as ranked_profiles
+      ORDER BY created_at ${order}
+    `);
+    res.json(result.rows);
+  }));
+  router.get("/:id", handleReq(async (req, res) => {
+    const { id } = req.params;
+    const profileRes = await pool2.query(`
+      SELECT p.*, r.username as referrer_username, r.full_name as referrer_full_name 
+      FROM profiles p
+      LEFT JOIN profiles r ON p.referred_by = r.id
+      WHERE p.id = $1
+    `, [id]);
+    if (profileRes.rows.length === 0) return res.status(404).json({ error: "User not found" });
+    const profile = profileRes.rows[0];
+    const gistsRes = await pool2.query("SELECT COUNT(*) FROM gists WHERE user_id = $1", [id]);
+    const momentsRes = await pool2.query("SELECT COUNT(*) FROM moments WHERE user_id = $1", [id]);
+    const storiesRes = await pool2.query("SELECT COUNT(*) FROM stories WHERE user_id = $1", [id]);
+    const ticketsRes = await pool2.query("SELECT COUNT(*) FROM tickets WHERE user_id = $1", [id]);
+    const gistsData = await pool2.query("SELECT * FROM gists WHERE user_id = $1 ORDER BY created_at DESC", [id]);
+    const momentsData = await pool2.query("SELECT * FROM moments WHERE user_id = $1 ORDER BY created_at DESC", [id]);
+    const storiesData = await pool2.query("SELECT * FROM stories WHERE user_id = $1 ORDER BY created_at DESC", [id]);
+    const ticketsData = await pool2.query("SELECT * FROM tickets WHERE user_id = $1 ORDER BY created_at DESC", [id]);
+    res.json({
+      ...profile,
+      gists_count: parseInt(gistsRes.rows[0].count),
+      moments_count: parseInt(momentsRes.rows[0].count),
+      stories_count: parseInt(storiesRes.rows[0].count),
+      tickets_count: parseInt(ticketsRes.rows[0].count),
+      gists: gistsData.rows,
+      moments: momentsData.rows,
+      stories: storiesData.rows,
+      tickets: ticketsData.rows
+    });
+  }));
+  router.put("/:id/upgrade", handleReq(async (req, res) => {
+    const { id } = req.params;
+    const adminEmail = req.adminEmail;
+    if (adminEmail !== "allowancemobileapp@gmail.com") {
+      return res.status(403).json({ error: "Only allowancemobileapp@gmail.com can upgrade users." });
+    }
+    const { tier } = req.body;
+    const expiresAt = /* @__PURE__ */ new Date();
+    expiresAt.setFullYear(expiresAt.getFullYear() + 10);
+    const result = await pool2.query(
+      "UPDATE profiles SET subscription_tier = $1, subscription_expires_at = $2 WHERE id = $3 RETURNING *",
+      [tier, expiresAt, id]
+    );
+    await logAdminAction2(req, `Updated user ${id} subscription tier to ${tier}`, { tier, expiresAt });
+    res.json(result.rows[0]);
+  }));
+  router.put("/:id/gists/:gistId", handleReq(async (req, res) => {
+    const { id, gistId } = req.params;
+    const { title, category } = req.body;
+    const result = await pool2.query(
+      "UPDATE gists SET title = $1, category = $2 WHERE id = $3 AND user_id = $4 RETURNING *",
+      [title, category, gistId, id]
+    );
+    await logAdminAction2(req, `Edited gist ${gistId} for user ${id}`, { title, category });
+    res.json(result.rows[0]);
+  }));
+  router.put("/:id/moments/:momentId", handleReq(async (req, res) => {
+    const { id, momentId } = req.params;
+    const { caption, category } = req.body;
+    const result = await pool2.query(
+      "UPDATE moments SET caption = $1, category = $2 WHERE id = $3 AND user_id = $4 RETURNING *",
+      [caption, category, momentId, id]
+    );
+    await logAdminAction2(req, `Edited moment ${momentId} for user ${id}`, { caption, category });
+    res.json(result.rows[0]);
+  }));
+  router.put("/:id/stories/:storyId", handleReq(async (req, res) => {
+    const { id, storyId } = req.params;
+    const { caption } = req.body;
+    const result = await pool2.query(
+      "UPDATE stories SET caption = $1 WHERE id = $2 AND user_id = $3 RETURNING *",
+      [caption, storyId, id]
+    );
+    await logAdminAction2(req, `Edited story ${storyId} for user ${id}`, { caption });
+    res.json(result.rows[0]);
+  }));
+  return router;
+}
+
 // server.ts
+import cors from "cors";
 dotenv.config();
 var app = express2();
+var PORT = 3e3;
+app.use(cors());
 app.use(express2.json());
 var envDbUrl = process.env.DATABASE_URL;
 var connectionString = envDbUrl && !envDbUrl.includes("localhost") && !envDbUrl.includes("127.0.0.1") ? envDbUrl : "postgresql://postgres.quuazutreaitqoquzolg:James2002eze%23@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
+var isLocalDb = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");
+var cleanConnectionString = connectionString.split("?")[0];
 var pool = new Pool({
-  connectionString
+  connectionString: cleanConnectionString,
+  ssl: isLocalDb ? false : { rejectUnauthorized: false }
 });
 async function initDb() {
   try {
@@ -341,7 +691,7 @@ app.post("/api/auth/verify", async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email required" });
     const lowerEmail = email.toLowerCase();
-    if (lowerEmail === "allowancemobileapp@gmail.com" || lowerEmail === "allowancemobielapp@gmail.com") return res.json({ verified: true, title: "Super Admin" });
+    if (lowerEmail === "allowancemobileapp@gmail.com" || lowerEmail === "allowancemobielapp@gmail.com") return res.json({ verified: true, title: "Super Admin", permissions: { all: true } });
     const result = await pool.query("SELECT title, permissions FROM admin_users WHERE email = $1", [lowerEmail]);
     if (result.rows.length > 0) {
       res.json({ verified: true, title: result.rows[0].title, permissions: result.rows[0].permissions });
@@ -353,6 +703,8 @@ app.post("/api/auth/verify", async (req, res) => {
   }
 });
 app.use("/api", requireAdmin, createLegacyRouter(pool));
+app.use("/api/library", requireAdmin, createLibraryRouter(pool));
+app.use("/api/users", requireAdmin, createUserRouter(pool));
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM company_expenses ORDER BY expense_date DESC");
@@ -455,7 +807,18 @@ app.get("/api/logs/admin", requireAdmin, async (req, res) => {
 });
 app.get("/api/logs/app", requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM system_logs WHERE type = 'app' ORDER BY created_at DESC LIMIT 500");
+    const result = await pool.query(`
+      SELECT 
+        al.id, 
+        COALESCE(p.username, 'anonymous') as user_email, 
+        al.action_type as action_summary, 
+        al.created_at, 
+        jsonb_build_object('user_id', al.user_id, 'log_details', al.details) as details 
+      FROM activity_logs al 
+      LEFT JOIN profiles p ON (al.user_id::text = p.id::text OR (al.details->'extra'->>'user_id')::text = p.id::text)
+      ORDER BY al.created_at DESC 
+      LIMIT 1000
+    `);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -763,28 +1126,29 @@ app.post("/api/coupons", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+  import("vite").then(async ({ createServer: createViteServer }) => {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa"
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express2.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-  if (!process.env.VERCEL) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
-  }
+  }).catch((err) => console.error("Failed to start Vite dev server:", err));
+} else if (!process.env.VERCEL) {
+  const distPath = path.join(process.cwd(), "dist");
+  app.use(express2.static(distPath));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Production server running on http://localhost:${PORT}`);
+  });
 }
-startServer();
 var server_default = app;
 export {
   server_default as default
 };
+//# sourceMappingURL=server.js.map

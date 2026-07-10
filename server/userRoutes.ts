@@ -11,6 +11,16 @@ export function createUserRouter(pool: any) {
     }
   };
 
+  const logAdminAction = async (req: any, action: string, details: any) => {
+    try {
+      const adminEmail = req.adminEmail || 'unknown';
+      await pool.query(
+        'INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)',
+        ['admin', adminEmail, action, JSON.stringify(details)]
+      );
+    } catch(e) { console.error('Failed to log admin action', e); }
+  };
+
   router.get('/', handleReq(async (req: any, res: any) => {
     const { sort } = req.query;
     const order = sort === 'newest' ? 'DESC' : 'ASC';
@@ -79,6 +89,8 @@ export function createUserRouter(pool: any) {
       [tier, expiresAt, id]
     );
 
+    await logAdminAction(req, `Updated user ${id} subscription tier to ${tier}`, { tier, expiresAt });
+
     res.json(result.rows[0]);
   }));
 
@@ -90,6 +102,9 @@ export function createUserRouter(pool: any) {
       'UPDATE gists SET title = $1, category = $2 WHERE id = $3 AND user_id = $4 RETURNING *',
       [title, category, gistId, id]
     );
+
+    await logAdminAction(req, `Edited gist ${gistId} for user ${id}`, { title, category });
+
     res.json(result.rows[0]);
   }));
 
@@ -101,6 +116,9 @@ export function createUserRouter(pool: any) {
       'UPDATE moments SET caption = $1, category = $2 WHERE id = $3 AND user_id = $4 RETURNING *',
       [caption, category, momentId, id]
     );
+
+    await logAdminAction(req, `Edited moment ${momentId} for user ${id}`, { caption, category });
+
     res.json(result.rows[0]);
   }));
 
@@ -112,6 +130,9 @@ export function createUserRouter(pool: any) {
       'UPDATE stories SET caption = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
       [caption, storyId, id]
     );
+
+    await logAdminAction(req, `Edited story ${storyId} for user ${id}`, { caption });
+
     res.json(result.rows[0]);
   }));
 

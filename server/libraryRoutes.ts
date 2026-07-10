@@ -8,6 +8,16 @@ const upload = multer({ storage });
 export function createLibraryRouter(pool: Pool) {
   const router = Router();
 
+  const logAdminAction = async (req: any, action: string, details: any) => {
+    try {
+      const adminEmail = req.adminEmail || 'unknown';
+      await pool.query(
+        'INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)',
+        ['admin', adminEmail, action, JSON.stringify(details)]
+      );
+    } catch(e) { console.error('Failed to log admin action', e); }
+  };
+
   const handleReq = (handler: any) => async (req: any, res: any) => {
     try {
       await handler(req, res);
@@ -65,6 +75,7 @@ export function createLibraryRouter(pool: Pool) {
       'INSERT INTO colleges (school_id, name) VALUES ($1, $2) RETURNING *',
       [school_id, name]
     );
+    await logAdminAction(req, `Created college ${name}`, { school_id, name });
     res.json(result.rows[0]);
   }));
 
@@ -74,11 +85,13 @@ export function createLibraryRouter(pool: Pool) {
       'UPDATE colleges SET school_id = $1, name = $2 WHERE id = $3 RETURNING *',
       [school_id, name, req.params.id]
     );
+    await logAdminAction(req, `Updated college ${req.params.id}`, { school_id, name });
     res.json(result.rows[0]);
   }));
 
   router.delete('/colleges/:id', handleReq(async (req, res) => {
     await pool.query('DELETE FROM colleges WHERE id = $1', [req.params.id]);
+    await logAdminAction(req, `Deleted college ${req.params.id}`, {});
     res.json({ success: true });
   }));
 
@@ -101,6 +114,7 @@ export function createLibraryRouter(pool: Pool) {
       'INSERT INTO courses (college_id, course_code, course_title, course_description) VALUES ($1, $2, $3, $4) RETURNING *',
       [college_id, course_code, course_title, course_description]
     );
+    await logAdminAction(req, `Created course ${course_code}`, { college_id, course_code, course_title });
     res.json(result.rows[0]);
   }));
 
@@ -110,11 +124,13 @@ export function createLibraryRouter(pool: Pool) {
       'UPDATE courses SET college_id = $1, course_code = $2, course_title = $3, course_description = $4 WHERE id = $5 RETURNING *',
       [college_id, course_code, course_title, course_description, req.params.id]
     );
+    await logAdminAction(req, `Updated course ${req.params.id}`, { college_id, course_code, course_title });
     res.json(result.rows[0]);
   }));
 
   router.delete('/courses/:id', handleReq(async (req, res) => {
     await pool.query('DELETE FROM courses WHERE id = $1', [req.params.id]);
+    await logAdminAction(req, `Deleted course ${req.params.id}`, {});
     res.json({ success: true });
   }));
 
@@ -137,6 +153,7 @@ export function createLibraryRouter(pool: Pool) {
       'INSERT INTO library_materials (course_id, material_type, title, academic_year, semester, file_url, price) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
       [course_id, material_type, title, academic_year, semester, file_url, price || 0]
     );
+    await logAdminAction(req, `Created library material ${title}`, { course_id, material_type });
     res.json(result.rows[0]);
   }));
 
@@ -146,11 +163,13 @@ export function createLibraryRouter(pool: Pool) {
       'UPDATE library_materials SET course_id = $1, material_type = $2, title = $3, academic_year = $4, semester = $5, file_url = $6, price = $7 WHERE id = $8 RETURNING *',
       [course_id, material_type, title, academic_year, semester, file_url, price || 0, req.params.id]
     );
+    await logAdminAction(req, `Updated library material ${req.params.id}`, { course_id, material_type, title });
     res.json(result.rows[0]);
   }));
 
   router.delete('/library_materials/:id', handleReq(async (req, res) => {
     await pool.query('DELETE FROM library_materials WHERE id = $1', [req.params.id]);
+    await logAdminAction(req, `Deleted library material ${req.params.id}`, {});
     res.json({ success: true });
   }));
 
@@ -232,6 +251,7 @@ export function createLibraryRouter(pool: Pool) {
       ).join(',');
 
       const result = await pool.query(`INSERT INTO quiz_questions (course_id, material_id, question_text, option_a, option_b, option_c, correct_option) VALUES ${values} RETURNING *`);
+      await logAdminAction(req, `Generated ${questions.length} quiz questions for material ${material_id}`, { course_id, count: questions.length });
       return res.json(result.rows);
     }
     
@@ -240,11 +260,13 @@ export function createLibraryRouter(pool: Pool) {
   
   router.delete('/quiz_questions/:id', handleReq(async (req, res) => {
     await pool.query('DELETE FROM quiz_questions WHERE id = $1', [req.params.id]);
+    await logAdminAction(req, `Deleted quiz question ${req.params.id}`, {});
     res.json({ success: true });
   }));
 
   router.delete('/quiz_questions/material/:material_id', handleReq(async (req, res) => {
     await pool.query('DELETE FROM quiz_questions WHERE material_id = $1', [req.params.material_id]);
+    await logAdminAction(req, `Deleted all quiz questions for material ${req.params.material_id}`, {});
     res.json({ success: true });
   }));
 
