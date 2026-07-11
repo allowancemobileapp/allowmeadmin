@@ -447,10 +447,12 @@ function createLibraryRouter(pool2) {
   }));
   router.delete("/quiz_questions/:id", handleReq(async (req, res) => {
     await pool2.query("DELETE FROM quiz_questions WHERE id = $1", [req.params.id]);
+    await logAdminAction2(req, `Deleted quiz question ${req.params.id}`, {});
     res.json({ success: true });
   }));
   router.delete("/quiz_questions/material/:material_id", handleReq(async (req, res) => {
     await pool2.query("DELETE FROM quiz_questions WHERE material_id = $1", [req.params.material_id]);
+    await logAdminAction2(req, `Deleted all quiz questions for material ${req.params.material_id}`, {});
     res.json({ success: true });
   }));
   return router;

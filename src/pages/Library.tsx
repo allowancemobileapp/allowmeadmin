@@ -350,8 +350,8 @@ export default function Library() {
                 )}
                 
                 <div className="flex flex-col gap-1 mt-1">
-                  <label className="text-xs font-semibold text-slate-600">File (PDF, Image)</label>
-                  <input type="file" accept="image/*,application/pdf" onChange={e => setMaterialFile(e.target.files?.[0] || null)} required className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 file:mr-4 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"/>
+                  <label className="text-xs font-semibold text-slate-600">File (PDF, Image, Word, PPT)</label>
+                  <input type="file" accept="image/*,application/pdf,.doc,.docx,.ppt,.pptx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={e => setMaterialFile(e.target.files?.[0] || null)} required className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 file:mr-4 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"/>
                 </div>
                 
                 <div className="flex items-center gap-2 mt-1">
