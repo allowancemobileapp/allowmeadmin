@@ -205,19 +205,30 @@ export function createLibraryRouter(pool: Pool) {
       const fileResponse = await fetch(file_url);
       const arrayBuffer = await fileResponse.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
-      const base64 = buffer.toString('base64');
       const mimeType = fileResponse.headers.get('content-type') || 'application/pdf';
       
+      const fs = await import('fs');
+      const os = await import('os');
+      const path = await import('path');
+      const tempFilePath = path.join(os.tmpdir(), `gemini_upload_${Date.now()}`);
+      fs.writeFileSync(tempFilePath, buffer);
+      
+      const uploadResult = await ai.files.upload({
+        file: tempFilePath,
+        config: { mimeType: mimeType },
+      });
+      fs.unlinkSync(tempFilePath);
+      
       contents.push({
-        inlineData: {
-          mimeType,
-          data: base64
+        fileData: {
+          mimeType: mimeType,
+          fileUri: uploadResult.uri
         }
       });
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash",
       contents,
       config: {
         responseMimeType: "application/json",
@@ -238,8 +249,9 @@ export function createLibraryRouter(pool: Pool) {
       }
     });
     
-    const questionsText = response.text || "[]";
-    const questions = JSON.parse(questionsText.trim());
+    let questionsText = response.text || "[]";
+    questionsText = questionsText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    const questions = JSON.parse(questionsText);
     
     if (questions.length > 0) {
       // Clear existing questions for this material first

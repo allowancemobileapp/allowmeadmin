@@ -142,7 +142,7 @@ export default function Library() {
       
       const { url } = await uploadRes.json();
 
-      await post('/api/library/library_materials', { 
+      const createdMaterial = await post<any>('/api/library/library_materials', { 
         course_id: parseInt(selectedCourse), 
         material_type: materialType,
         title: materialTitle,
@@ -153,6 +153,7 @@ export default function Library() {
       });
       setMaterialTitle(''); setMaterialYear(''); setMaterialFile(null); setMaterialPrice('0');
       fetchMaterials(selectedCourse);
+      generateQuiz(createdMaterial, true);
     } catch (err: any) { 
       alert(err.message); 
     } finally {
@@ -184,24 +185,32 @@ export default function Library() {
     } catch (err: any) { alert(err.message); }
   };
 
-  const generateQuiz = async (material: any) => {
-    if (!window.confirm(`Generate a pool of 50 pop quiz questions from this ${material.material_type} using AI? This may take up to a minute.`)) return;
+  const generateQuiz = async (material: any, auto: boolean = false) => {
+    if (!auto) {
+      if (!window.confirm(`Generate a pool of 50 pop quiz questions from this ${material.material_type} using AI? This may take up to a minute.`)) return;
+    }
     
     setGeneratingQuiz(material.id);
-    setViewingQuizFor(material);
-    setQuizQuestions([]);
+    if (!auto) setViewingQuizFor(material);
+    if (!auto) setQuizQuestions([]);
     
     try {
       const res = await post<any[]>('/api/library/quiz_questions/generate', {
-        course_id: parseInt(selectedCourse),
+        course_id: material.course_id,
         material_id: material.id,
         file_url: material.file_url
       });
-      alert(`Successfully generated ${res.length} questions!`);
-      setQuizQuestions(res);
+      if (!auto) {
+        alert(`Successfully generated ${res.length} questions!`);
+        setQuizQuestions(res);
+      }
     } catch (err: any) {
-      alert("Error generating quiz: " + err.message);
-      setViewingQuizFor(null);
+      if (!auto) {
+        alert("Error generating quiz: " + err.message);
+        setViewingQuizFor(null);
+      } else {
+        console.error("Auto-generate quiz failed:", err);
+      }
     } finally {
       setGeneratingQuiz(null);
     }
@@ -270,7 +279,7 @@ export default function Library() {
               <form onSubmit={handleAddCourse} className="flex flex-col gap-2 mt-2">
                 <input type="text" value={courseCode} onChange={e=>setCourseCode(e.target.value)} required placeholder="Course Code (e.g. MTH101)" className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
                 <input type="text" value={courseTitle} onChange={e=>setCourseTitle(e.target.value)} required placeholder="Course Title" className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
-                <input type="text" value={courseDesc} onChange={e=>setCourseDesc(e.target.value)} placeholder="Description (Optional)" className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
+                <textarea value={courseDesc} onChange={e=>setCourseDesc(e.target.value)} placeholder="Description (Optional)" rows={3} className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y"/>
                 <button type="submit" className="bg-indigo-600 text-white px-3 py-2 rounded text-xs font-bold hover:bg-indigo-700 mt-1">Add Course</button>
               </form>
             </div>

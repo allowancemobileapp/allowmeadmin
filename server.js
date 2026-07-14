@@ -402,17 +402,26 @@ function createLibraryRouter(pool2) {
       const fileResponse = await fetch(file_url);
       const arrayBuffer = await fileResponse.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
-      const base64 = buffer.toString("base64");
       const mimeType = fileResponse.headers.get("content-type") || "application/pdf";
+      const fs = await import("fs");
+      const os = await import("os");
+      const path2 = await import("path");
+      const tempFilePath = path2.join(os.tmpdir(), `gemini_upload_${Date.now()}`);
+      fs.writeFileSync(tempFilePath, buffer);
+      const uploadResult = await ai.files.upload({
+        file: tempFilePath,
+        config: { mimeType }
+      });
+      fs.unlinkSync(tempFilePath);
       contents.push({
-        inlineData: {
+        fileData: {
           mimeType,
-          data: base64
+          fileUri: uploadResult.uri
         }
       });
     }
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash",
       contents,
       config: {
         responseMimeType: "application/json",
@@ -432,8 +441,9 @@ function createLibraryRouter(pool2) {
         }
       }
     });
-    const questionsText = response.text || "[]";
-    const questions = JSON.parse(questionsText.trim());
+    let questionsText = response.text || "[]";
+    questionsText = questionsText.replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
+    const questions = JSON.parse(questionsText);
     if (questions.length > 0) {
       await pool2.query("DELETE FROM quiz_questions WHERE material_id = $1", [material_id]);
       const values = questions.map(
