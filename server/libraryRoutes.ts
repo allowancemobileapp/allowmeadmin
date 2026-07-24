@@ -193,81 +193,124 @@ export function createLibraryRouter(pool: Pool) {
   router.post('/quiz_questions/generate', handleReq(async (req, res) => {
     const { course_id, material_id, file_url } = req.body;
     
-    // Dynamically import genai inside the handler to avoid startup crashes if key is missing
-    const { GoogleGenAI, Type } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    
-    let contents: any[] = [
-      { text: `You are an expert professor. Generate a 50-question pop quiz based on the course material provided. For each question provide exactly 3 options (option_a, option_b, option_c) and one correct_option ('A', 'B', or 'C').` }
-    ];
-    
-    if (file_url) {
-      const fileResponse = await fetch(file_url);
-      const arrayBuffer = await fileResponse.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      const mimeType = fileResponse.headers.get('content-type') || 'application/pdf';
-      
-      const fs = await import('fs');
-      const os = await import('os');
-      const path = await import('path');
-      const tempFilePath = path.join(os.tmpdir(), `gemini_upload_${Date.now()}`);
-      fs.writeFileSync(tempFilePath, buffer);
-      
-      const uploadResult = await ai.files.upload({
-        file: tempFilePath,
-        config: { mimeType: mimeType },
-      });
-      fs.unlinkSync(tempFilePath);
-      
-      contents.push({
-        fileData: {
-          mimeType: mimeType,
-          fileUri: uploadResult.uri
-        }
-      });
+    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY.trim() === '') {
+      return res.status(400).json({ error: "Gemini API key is not configured. Please set GEMINI_API_KEY in your environment variables to use AI features." });
     }
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              question_text: { type: Type.STRING },
-              option_a: { type: Type.STRING },
-              option_b: { type: Type.STRING },
-              option_c: { type: Type.STRING },
-              correct_option: { type: Type.STRING, enum: ["A", "B", "C"] }
-            },
-            required: ['question_text', 'option_a', 'option_b', 'option_c', 'correct_option']
+    try {
+      // Dynamically import genai inside the handler to avoid startup crashes if key is missing
+      const { GoogleGenAI, Type } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      let contents: any[] = [
+        { text: `You are an expert professor. Generate a 50-question pop quiz based on the course material provided. For each question provide exactly 3 options (option_a, option_b, option_c) and one correct_option ('A', 'B', or 'C').` }
+      ];
+      
+      if (file_url) {
+        const fileResponse = await fetch(file_url);
+        const arrayBuffer = await fileResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const mimeType = fileResponse.headers.get('content-type') || 'application/pdf';
+        
+        const fs = await import('fs');
+        const os = await import('os');
+        const path = await import('path');
+        const tempFilePath = path.join(os.tmpdir(), `gemini_upload_${Date.now()}`);
+        fs.writeFileSync(tempFilePath, buffer);
+        
+        const supportedGeminiMimes = [
+          'application/pdf', 'text/plain', 'text/csv', 'text/html', 'text/markdown', 'text/rtf', 'text/xml', 'application/json',
+          'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'
+        ];
+        
+        if (supportedGeminiMimes.includes(mimeType) || mimeType.startsWith('image/')) {
+          const uploadResult = await ai.files.upload({
+            file: tempFilePath,
+            config: { mimeType: mimeType },
+          });
+          fs.unlinkSync(tempFilePath);
+          
+          contents.push({
+            fileData: {
+              mimeType: mimeType,
+              fileUri: uploadResult.uri
+            }
+          });
+        } else {
+          // Use officeparser for unsupported types like docx, pptx
+          try {
+            const officeparser = await import('officeparser');
+            const parsed = await officeparser.parseOffice(tempFilePath);
+            const text = parsed.toText();
+            fs.unlinkSync(tempFilePath);
+            contents.push({ text: `Document content:\n\n${text}` });
+          } catch (e: any) {
+            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+            throw new Error(`Failed to extract text from file (${mimeType}). Details: ${e.message}`);
           }
         }
       }
-    });
-    
-    let questionsText = response.text || "[]";
-    questionsText = questionsText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
-    const questions = JSON.parse(questionsText);
-    
-    if (questions.length > 0) {
-      // Clear existing questions for this material first
-      await pool.query('DELETE FROM quiz_questions WHERE material_id = $1', [material_id]);
 
-      // Bulk insert
-      const values = questions.map((q: any) => 
-        `(${course_id}, ${material_id}, '${q.question_text.replace(/'/g, "''")}', '${q.option_a.replace(/'/g, "''")}', '${q.option_b.replace(/'/g, "''")}', '${q.option_c.replace(/'/g, "''")}', '${q.correct_option}')`
-      ).join(',');
+      let response;
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    question_text: { type: Type.STRING },
+                    option_a: { type: Type.STRING },
+                    option_b: { type: Type.STRING },
+                    option_c: { type: Type.STRING },
+                    correct_option: { type: Type.STRING, enum: ["A", "B", "C"] }
+                  },
+                  required: ['question_text', 'option_a', 'option_b', 'option_c', 'correct_option']
+                }
+              }
+            }
+          });
+          break; // success
+        } catch (err: any) {
+          retries--;
+          if (retries === 0 || !(err.message?.includes('503') || err.message?.includes('429'))) {
+            throw new Error(`AI Model Error: ${err.message}`);
+          }
+          await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry
+        }
+      }
+      
+      let questionsText = response.text || "[]";
+      questionsText = questionsText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+      const questions = JSON.parse(questionsText);
+      
+      if (questions.length > 0) {
+        // Clear existing questions for this material first
+        await pool.query('DELETE FROM quiz_questions WHERE material_id = $1', [material_id]);
 
-      const result = await pool.query(`INSERT INTO quiz_questions (course_id, material_id, question_text, option_a, option_b, option_c, correct_option) VALUES ${values} RETURNING *`);
-      await logAdminAction(req, `Generated ${questions.length} quiz questions for material ${material_id}`, { course_id, count: questions.length });
-      return res.json(result.rows);
+        // Bulk insert
+        const values = questions.map((q: any) => 
+          `(${course_id}, ${material_id}, '${q.question_text.replace(/'/g, "''")}', '${q.option_a.replace(/'/g, "''")}', '${q.option_b.replace(/'/g, "''")}', '${q.option_c.replace(/'/g, "''")}', '${q.correct_option}')`
+        ).join(',');
+
+        const result = await pool.query(`INSERT INTO quiz_questions (course_id, material_id, question_text, option_a, option_b, option_c, correct_option) VALUES ${values} RETURNING *`);
+        await logAdminAction(req, `Generated ${questions.length} quiz questions for material ${material_id}`, { course_id, count: questions.length });
+        return res.json(result.rows);
+      }
+      
+      res.json([]);
+    } catch (err: any) {
+      if (err.message && err.message.includes("API key not valid")) {
+        return res.status(400).json({ error: "Your Gemini API key is invalid or has expired. Please check your GEMINI_API_KEY environment variable." });
+      }
+      throw err;
     }
-    
-    res.json([]);
   }));
   
   router.delete('/quiz_questions/:id', handleReq(async (req, res) => {

@@ -31,6 +31,10 @@ export default function Library() {
 
   const [generatingQuiz, setGeneratingQuiz] = useState<number | null>(null);
   const [viewingQuizFor, setViewingQuizFor] = useState<any>(null);
+  const [promptRegenerate, setPromptRegenerate] = useState<any>(null);
+  const [confirmGenerate, setConfirmGenerate] = useState<any>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{action: () => void, message: string} | null>(null);
+  const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
   const [quizQuestions, setQuizQuestions] = useState<any[]>([]);
 
   useEffect(() => {
@@ -74,26 +78,27 @@ export default function Library() {
 
   const handleAddCollege = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSchool) return alert("Select a school");
+    if (!selectedSchool) return setNotification({ type: 'error', message: "Select a school" });
     try {
       await post('/api/library/colleges', { school_id: parseInt(selectedSchool), name: collegeName });
       setCollegeName('');
       fetchColleges(selectedSchool);
-    } catch (err: any) { alert(err.message); }
+    } catch (err: any) { setNotification({ type: 'error', message: `${err.message}` }); }
   };
 
   const handleDeleteCollege = async (id: number) => {
-    if (!window.confirm("Delete college?")) return;
-    try {
-      await del(`/api/library/colleges/${id}`);
-      fetchColleges(selectedSchool);
-      if (selectedCollege === id.toString()) setSelectedCollege('');
-    } catch (err: any) { alert(err.message); }
+    setConfirmDelete({ action: async () => {
+      try {
+        await del(`/api/library/colleges/${id}`);
+        fetchColleges(selectedSchool);
+        if (selectedCollege === id.toString()) setSelectedCollege('');
+      } catch (err: any) { setNotification({ type: 'error', message: `${err.message}` }); }
+    }, message: "Are you sure you want to delete this college?" });
   };
 
   const handleAddCourse = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCollege) return alert("Select a college");
+    if (!selectedCollege) return setNotification({ type: 'error', message: "Select a college" });
     try {
       await post('/api/library/courses', { 
         college_id: parseInt(selectedCollege), 
@@ -103,22 +108,23 @@ export default function Library() {
       });
       setCourseCode(''); setCourseTitle(''); setCourseDesc('');
       fetchCourses(selectedCollege);
-    } catch (err: any) { alert(err.message); }
+    } catch (err: any) { setNotification({ type: 'error', message: `${err.message}` }); }
   };
 
   const handleDeleteCourse = async (id: number) => {
-    if (!window.confirm("Delete course?")) return;
-    try {
-      await del(`/api/library/courses/${id}`);
-      fetchCourses(selectedCollege);
-      if (selectedCourse === id.toString()) setSelectedCourse('');
-    } catch (err: any) { alert(err.message); }
+    setConfirmDelete({ action: async () => {
+      try {
+        await del(`/api/library/courses/${id}`);
+        fetchCourses(selectedCollege);
+        if (selectedCourse === id.toString()) setSelectedCourse('');
+      } catch (err: any) { setNotification({ type: 'error', message: `${err.message}` }); }
+    }, message: "Are you sure you want to delete this course?" });
   };
 
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCourse) return alert("Select a course");
-    if (!materialFile) return alert("Please select a file to upload");
+    if (!selectedCourse) return setNotification({ type: 'error', message: "Select a course" });
+    if (!materialFile) return setNotification({ type: 'error', message: "Please select a file to upload" });
     
     setIsUploading(true);
     try {
@@ -155,18 +161,19 @@ export default function Library() {
       fetchMaterials(selectedCourse);
       generateQuiz(createdMaterial, true);
     } catch (err: any) { 
-      alert(err.message); 
+      setNotification({ type: 'error', message: `${err.message}` }); 
     } finally {
       setIsUploading(false);
     }
   };
 
   const handleDeleteMaterial = async (id: number) => {
-    if (!window.confirm("Delete material?")) return;
-    try {
-      await del(`/api/library/library_materials/${id}`);
-      fetchMaterials(selectedCourse);
-    } catch (err: any) { alert(err.message); }
+    setConfirmDelete({ action: async () => {
+      try {
+        await del(`/api/library/library_materials/${id}`);
+        fetchMaterials(selectedCourse);
+      } catch (err: any) { setNotification({ type: 'error', message: `${err.message}` }); }
+    }, message: "Are you sure you want to delete this material?" });
   };
 
   const handleViewQuizzes = async (material: any) => {
@@ -174,20 +181,30 @@ export default function Library() {
       const qs = await get<any[]>(`/api/library/quiz_questions?material_id=${material.id}`);
       setQuizQuestions(qs);
       setViewingQuizFor(material);
-    } catch (err: any) { alert(err.message); }
+    } catch (err: any) { setNotification({ type: 'error', message: `${err.message}` }); }
   };
 
   const handleDeleteQuizQuestion = async (id: number) => {
-    if (!window.confirm("Delete this question?")) return;
-    try {
-      await del(`/api/library/quiz_questions/${id}`);
-      setQuizQuestions(q => q.filter(x => x.id !== id));
-    } catch (err: any) { alert(err.message); }
+    setConfirmDelete({ action: async () => {
+      try {
+        await del(`/api/library/quiz_questions/${id}`);
+        setQuizQuestions(q => q.filter(x => x.id !== id));
+      } catch (err: any) { setNotification({ type: 'error', message: `${err.message}` }); }
+    }, message: "Are you sure you want to delete this question?" });
   };
 
-  const generateQuiz = async (material: any, auto: boolean = false) => {
-    if (!auto) {
-      if (!window.confirm(`Generate a pool of 50 pop quiz questions from this ${material.material_type} using AI? This may take up to a minute.`)) return;
+  const generateQuiz = async (material: any, auto: boolean = false, forceRegenerate: boolean = false) => {
+    if (!auto && !forceRegenerate) {
+      try {
+        const existingQs = await get<any[]>(`/api/library/quiz_questions?material_id=${material.id}`);
+        if (existingQs.length > 0) {
+          setPromptRegenerate(material);
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to check existing questions:", e);
+      }
+      setConfirmGenerate(material); return;
     }
     
     setGeneratingQuiz(material.id);
@@ -201,12 +218,12 @@ export default function Library() {
         file_url: material.file_url
       });
       if (!auto) {
-        alert(`Successfully generated ${res.length} questions!`);
+        setNotification({ type: 'success', message: `Successfully generated ${res.length} questions!` });
         setQuizQuestions(res);
       }
     } catch (err: any) {
       if (!auto) {
-        alert("Error generating quiz: " + err.message);
+        setNotification({ type: 'error', message: err.message });
         setViewingQuizFor(null);
       } else {
         console.error("Auto-generate quiz failed:", err);
@@ -376,6 +393,147 @@ export default function Library() {
           )}
         </div>
       </div>
+
+      
+      
+      {/* Confirm Delete Modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-end justify-center sm:items-center p-4">
+          <div className="bg-white rounded-t-xl sm:rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-[slideUp_0.3s_ease-out]">
+            <div className="p-5 text-center">
+              <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              </div>
+              <h3 className="font-bold text-slate-800 text-lg mb-1">Confirm Delete</h3>
+              <p className="text-sm text-slate-500 mb-5">{confirmDelete.message}</p>
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setConfirmDelete(null)}
+                  className="flex-1 bg-slate-100 text-slate-700 rounded-lg py-2.5 font-bold hover:bg-slate-200 transition"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    confirmDelete.action();
+                    setConfirmDelete(null);
+                  }}
+                  className="flex-1 bg-red-600 text-white rounded-lg py-2.5 font-bold hover:bg-red-700 transition"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Generate Modal */}
+      {confirmGenerate && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-end justify-center sm:items-center p-4">
+          <div className="bg-white rounded-t-xl sm:rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-[slideUp_0.3s_ease-out]">
+            <div className="p-5 text-center">
+              <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                <Zap className="w-6 h-6" />
+              </div>
+              <h3 className="font-bold text-slate-800 text-lg mb-1">Generate AI Quiz</h3>
+              <p className="text-sm text-slate-500 mb-5">Generate a pool of 50 pop quiz questions from this {confirmGenerate.material_type}? This may take up to a minute.</p>
+              
+              <div className="flex flex-col gap-2">
+                <button 
+                  onClick={() => {
+                    const material = confirmGenerate;
+                    setConfirmGenerate(null);
+                    generateQuiz(material, false, true); // force pass the confirm check
+                  }}
+                  className="w-full bg-indigo-600 text-white rounded-lg py-2.5 font-bold hover:bg-indigo-700 transition"
+                >
+                  Yes, Generate Quiz
+                </button>
+                <button 
+                  onClick={() => setConfirmGenerate(null)}
+                  className="w-full mt-2 text-slate-500 text-sm font-semibold hover:text-slate-800 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification Modal */}
+      {notification && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[60] flex items-end justify-center sm:items-center p-4">
+          <div className="bg-white rounded-t-xl sm:rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-[slideUp_0.3s_ease-out]">
+            <div className="p-5 text-center">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${notification.type === 'error' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                {notification.type === 'error' ? (
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                ) : (
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                )}
+              </div>
+              <h3 className="font-bold text-slate-800 text-lg mb-1">
+                {notification.type === 'error' ? 'Failed to Generate' : 'Success!'}
+              </h3>
+              <p className="text-sm text-slate-500 mb-6">{notification.message}</p>
+              
+              <button 
+                onClick={() => setNotification(null)}
+                className={`w-full text-white rounded-lg py-2.5 font-bold transition ${notification.type === 'error' ? 'bg-slate-800 hover:bg-slate-900' : 'bg-green-600 hover:bg-green-700'}`}
+              >
+                Okay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Regenerate Prompt Modal */}
+      {promptRegenerate && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-end justify-center sm:items-center p-4">
+          <div className="bg-white rounded-t-xl sm:rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-[slideUp_0.3s_ease-out]">
+            <div className="p-5 text-center">
+              <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                <Zap className="w-6 h-6" />
+              </div>
+              <h3 className="font-bold text-slate-800 text-lg mb-1">Quiz Already Exists</h3>
+              <p className="text-sm text-slate-500 mb-5">This material already has generated quiz questions. What would you like to do?</p>
+              
+              <div className="flex flex-col gap-2">
+                <button 
+                  onClick={() => {
+                    const material = promptRegenerate;
+                    setPromptRegenerate(null);
+                    handleViewQuizzes(material);
+                  }}
+                  className="w-full bg-indigo-600 text-white rounded-lg py-2.5 font-bold hover:bg-indigo-700 transition"
+                >
+                  View Existing Questions
+                </button>
+                <button 
+                  onClick={() => {
+                    const material = promptRegenerate;
+                    setPromptRegenerate(null);
+                    generateQuiz(material, false, true);
+                  }}
+                  className="w-full bg-white border border-slate-200 text-slate-700 rounded-lg py-2.5 font-bold hover:bg-slate-50 transition"
+                >
+                  Regenerate New Questions
+                </button>
+                <button 
+                  onClick={() => setPromptRegenerate(null)}
+                  className="w-full mt-2 text-slate-500 text-sm font-semibold hover:text-slate-800 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Quiz Modal */}
       {viewingQuizFor && (

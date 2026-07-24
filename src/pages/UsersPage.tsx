@@ -62,7 +62,7 @@ export default function UsersPage() {
     const title = prompt("Enter new title for gist:");
     if (!title) return;
     try {
-      const res = await put(`/api/users/${selectedUser.id}/gists/${gistId}`, { title });
+      const res = await put<any>(`/api/users/${selectedUser.id}/gists/${gistId}`, { title });
       setSelectedUser((prev: any) => ({
         ...prev,
         gists: prev.gists.map((g: any) => g.id === gistId ? { ...g, title: res.title } : g)
@@ -74,7 +74,7 @@ export default function UsersPage() {
     const caption = prompt("Enter new caption for moment:");
     if (!caption) return;
     try {
-      const res = await put(`/api/users/${selectedUser.id}/moments/${momentId}`, { caption });
+      const res = await put<any>(`/api/users/${selectedUser.id}/moments/${momentId}`, { caption });
       setSelectedUser((prev: any) => ({
         ...prev,
         moments: prev.moments.map((m: any) => m.id === momentId ? { ...m, caption: res.caption } : m)
