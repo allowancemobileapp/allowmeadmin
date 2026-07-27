@@ -95,7 +95,7 @@ export default function VendorMenu() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Delete this menu item?')) return;
+    
     try {
       await del(`/api/vendor_menus/${id}`);
       fetchData();

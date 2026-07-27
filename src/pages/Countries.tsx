@@ -36,7 +36,7 @@ export default function Countries() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Delete this country?')) return;
+    
     try {
       await del(`/api/countries/${id}`);
       fetchCountries();

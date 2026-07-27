@@ -72,7 +72,7 @@ export default function Combos() {
   }, [vendorId]);
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Delete this combo?')) return;
+    
     try {
       await del(`/api/options/${id}`);
       fetchOptions();

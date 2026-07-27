@@ -37,7 +37,7 @@ export default function Transactions() {
   }, []);
 
   const handleGenerate = async (segment: string) => {
-    if (!window.confirm(`Are you sure you want to generate the ${segment === 'general' ? 'general financial' : segment} accounting sheet?`)) return;
+    
     setGenerating(segment);
     setGenerateMsg('');
     try {

@@ -46,7 +46,7 @@ export default function Vendors() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Delete this vendor?')) return;
+    
     try {
       await del(`/api/vendors/${id}`);
       fetchData();

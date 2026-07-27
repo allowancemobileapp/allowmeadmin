@@ -207,7 +207,7 @@ export function createLibraryRouter(pool: Pool) {
       ];
       
       if (file_url) {
-        const fileResponse = await fetch(file_url);
+        const fileResponse = await fetch(file_url, { signal: AbortSignal.timeout(60000) });
         const arrayBuffer = await fileResponse.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         const mimeType = fileResponse.headers.get('content-type') || 'application/pdf';
@@ -259,6 +259,7 @@ export function createLibraryRouter(pool: Pool) {
             model: "gemini-3.5-flash",
             contents,
             config: {
+              httpOptions: { timeout: 120000 },
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.ARRAY,
@@ -279,7 +280,7 @@ export function createLibraryRouter(pool: Pool) {
           break; // success
         } catch (err: any) {
           retries--;
-          if (retries === 0 || !(err.message?.includes('503') || err.message?.includes('429'))) {
+          if (retries === 0 || !(err.message?.includes('503') || err.message?.includes('429') || err.message?.includes('abort') || err.message?.includes('timeout') || err.message?.includes('fetch failed'))) {
             throw new Error(`AI Model Error: ${err.message}`);
           }
           await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry

@@ -27,7 +27,7 @@ export default function Gists() {
   }, []);
 
   const handleNotify = async (id: number) => {
-    if (!window.confirm("Send a push notification to users for this gist?")) return;
+    
     try {
       await post(`/api/gists/${id}/notify`, {});
       alert("Push notification sent!");
@@ -37,7 +37,7 @@ export default function Gists() {
   };
 
   const handleDeleteGist = async (id: number) => {
-    if (!window.confirm("Are you sure you want to delete this gist?")) return;
+    
     try {
       await del(`/api/gists/${id}`);
       alert("Gist successfully deleted");

@@ -68,7 +68,7 @@ export default function Schools() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Delete this school?')) return;
+    
     try {
       await del(`/api/schools/${id}`);
       fetchData();

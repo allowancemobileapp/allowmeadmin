@@ -13,6 +13,7 @@ import {
   Globe,
   GraduationCap,
   Store,
+  Briefcase,
   UtensilsCrossed,
   Package,
   BookOpen,
@@ -47,7 +48,10 @@ import VendorMenu from './pages/VendorMenu';
 import Meals from './pages/Meals';
 import Combos from './pages/Combos';
 import Library from './pages/Library';
+import Stores from './pages/Stores';
+import Services from './pages/Services';
 import Metadata from './pages/Metadata';
+import Approvals from './pages/Approvals';
 import UsersPage from './pages/UsersPage';
 
 function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: boolean) => void }) {
@@ -60,6 +64,8 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
     { to: '/countries', label: 'Countries', icon: Globe, id: 'countries' },
     { to: '/schools', label: 'Schools', icon: GraduationCap, id: 'schools' },
     { to: '/vendors', label: 'Vendors', icon: Store, id: 'vendors' },
+    { to: '/stores', label: 'Stores', icon: Store, id: 'stores' },
+    { to: '/services', label: 'Services', icon: Briefcase, id: 'services' },
     { to: '/meals', label: 'Meals (Master)', icon: UtensilsCrossed, id: 'meals' },
     { to: '/combos', label: 'Vendor Combos', icon: Package, id: 'combos' },
     { to: '/library', label: 'Academic Library', icon: BookOpen, id: 'library' },
@@ -70,6 +76,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
     { to: '/gists', label: 'Gist Moderation', icon: FileText, id: 'gists' },
     { to: '/tickets', label: 'Ticket Management', icon: TicketIcon, id: 'tickets' },
     { to: '/notifications', label: 'Notifications', icon: Bell, id: 'notifications' },
+    { to: '/approvals', label: 'Pending Approvals', icon: Store, id: 'approvals' },
     { to: '/metadata', label: 'System Metadata', icon: Package, id: 'metadata' },
   ];
 
@@ -165,6 +172,17 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 function Login() {
   const { login } = React.useContext(AuthContext);
+  const [loading, setLoading] = React.useState(false);
+
+  const handleLogin = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      await login();
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="flex h-screen items-center justify-center bg-slate-50 font-sans text-slate-900">
@@ -174,9 +192,9 @@ function Login() {
             <span className="font-bold text-slate-900 tracking-tight text-xl">ALLOWANCE <span className="text-indigo-600">PRO</span></span>
         </div>
         <p className="text-sm text-slate-500 mb-6 text-center">Sign in to access the administrator panel. Only authorized personnel.</p>
-        <button onClick={login} className="w-full py-3 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-2">
+        <button onClick={handleLogin} disabled={loading} className="w-full py-3 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
             <Globe className="w-4 h-4" />
-            SIGN IN WITH GOOGLE
+            {loading ? 'SIGNING IN...' : 'SIGN IN WITH GOOGLE'}
         </button>
       </div>
     </div>
@@ -289,6 +307,8 @@ function AppRouter() {
             <Route path="/countries" element={<Countries />} />
             <Route path="/schools" element={<Schools />} />
             <Route path="/vendors" element={<Vendors />} />
+            <Route path="/stores" element={<Stores />} />
+            <Route path="/services" element={<Services />} />
             <Route path="/vendors/:vendorId/menu" element={<VendorMenu />} />
             <Route path="/meals" element={<Meals />} />
             <Route path="/combos" element={<Combos />} />
@@ -301,6 +321,7 @@ function AppRouter() {
             <Route path="/gists" element={<Gists />} />
             <Route path="/tickets" element={<Tickets />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/approvals" element={<Approvals />} />
             <Route path="/metadata" element={<Metadata />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

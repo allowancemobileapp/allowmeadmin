@@ -25,7 +25,7 @@ export default function Notifications() {
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!window.confirm("Broadcast this notification to ALL users?")) return;
+    
     setSending(true);
     setSuccess('');
     setError('');

@@ -81,7 +81,7 @@ export default function Meals() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Delete this meal?')) return;
+    
     try {
       await del(`/api/meals/${id}`);
       fetchData();

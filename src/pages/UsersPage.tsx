@@ -86,7 +86,7 @@ export default function UsersPage() {
     const caption = prompt("Enter new caption for story:");
     if (!caption) return;
     try {
-      const res = await put(`/api/users/${selectedUser.id}/stories/${storyId}`, { caption });
+      const res = await put<any>(`/api/users/${selectedUser.id}/stories/${storyId}`, { caption });
       setSelectedUser((prev: any) => ({
         ...prev,
         stories: prev.stories.map((s: any) => s.id === storyId ? { ...s, caption: res.caption } : s)
@@ -297,6 +297,18 @@ export default function UsersPage() {
                             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Bio</p>
                             <p className="text-slate-700">{selectedUser.bio || <span className="italic text-slate-400">No bio provided</span>}</p>
                           </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 border-t border-slate-200/50 pt-4">
+                            <div>
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Occupation</p>
+                                <p className="text-sm font-medium text-slate-700">{selectedUser.occupation || <span className="italic text-slate-400">None</span>}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Credentials</p>
+                                <p className="text-sm font-medium text-slate-700">{selectedUser.credentials || <span className="italic text-slate-400">None</span>}</p>
+                            </div>
+                          </div>
+
                           <div className="flex items-center gap-2 mb-2">
                             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">School:</p>
                             <span className="text-sm font-medium text-slate-700">{selectedUser.school_name || 'N/A'}</span>

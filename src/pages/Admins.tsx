@@ -20,6 +20,9 @@ const PAGE_MODULES = [
   { id: 'logs', label: 'App Logs' },
   { id: 'admins', label: 'Account Permissions' },
   { id: 'metadata', label: 'System Metadata' },
+  { id: 'stores', label: 'Stores' },
+  { id: 'services', label: 'Services' },
+  { id: 'approvals', label: 'Pending Approvals' },
 ];
 
 export default function Admins() {

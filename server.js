@@ -403,7 +403,7 @@ function createLibraryRouter(pool2) {
         { text: `You are an expert professor. Generate a 50-question pop quiz based on the course material provided. For each question provide exactly 3 options (option_a, option_b, option_c) and one correct_option ('A', 'B', or 'C').` }
       ];
       if (file_url) {
-        const fileResponse = await fetch(file_url);
+        const fileResponse = await fetch(file_url, { signal: AbortSignal.timeout(6e4) });
         const arrayBuffer = await fileResponse.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         const mimeType = fileResponse.headers.get("content-type") || "application/pdf";
@@ -462,6 +462,7 @@ ${text}` });
             model: "gemini-3.5-flash",
             contents,
             config: {
+              httpOptions: { timeout: 12e4 },
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.ARRAY,
@@ -482,7 +483,7 @@ ${text}` });
           break;
         } catch (err) {
           retries--;
-          if (retries === 0 || !(err.message?.includes("503") || err.message?.includes("429"))) {
+          if (retries === 0 || !(err.message?.includes("503") || err.message?.includes("429") || err.message?.includes("abort") || err.message?.includes("timeout") || err.message?.includes("fetch failed"))) {
             throw new Error(`AI Model Error: ${err.message}`);
           }
           await new Promise((r) => setTimeout(r, 2e3));
@@ -756,7 +757,9 @@ app.post("/api/auth/verify", async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email required" });
     const lowerEmail = email.toLowerCase();
-    if (lowerEmail === "allowancemobileapp@gmail.com" || lowerEmail === "allowancemobielapp@gmail.com") return res.json({ verified: true, title: "Super Admin", permissions: { all: true } });
+    if (lowerEmail === "allowancemobileapp@gmail.com" || lowerEmail === "allowancemobielapp@gmail.com") {
+      return res.json({ verified: true, title: "Super Admin", permissions: { all: true } });
+    }
     const result = await pool.query("SELECT title, permissions FROM admin_users WHERE email = $1", [lowerEmail]);
     if (result.rows.length > 0) {
       res.json({ verified: true, title: result.rows[0].title, permissions: result.rows[0].permissions });
@@ -765,6 +768,38 @@ app.post("/api/auth/verify", async (req, res) => {
     }
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+app.get("/api/stores", requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query("SELECT s.*, p.username, p.full_name as owner_name FROM stores s LEFT JOIN profiles p ON s.owner_id = p.id ORDER BY s.created_at DESC");
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.delete("/api/stores/:id", requireAdmin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM stores WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/services", requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query("SELECT s.*, p.username, p.full_name as owner_name FROM services s LEFT JOIN profiles p ON COALESCE(s.owner_id, s.provider_id) = p.id ORDER BY s.created_at DESC");
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.delete("/api/services/:id", requireAdmin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM services WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 app.use("/api", requireAdmin, createLegacyRouter(pool));
@@ -1005,6 +1040,68 @@ app.get("/api/transactions", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+app.get("/api/approvals/stores", requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.*, p.username as owner_username 
+      FROM stores s 
+      LEFT JOIN profiles p ON s.owner_id = p.id 
+      WHERE s.status IN ('pending', 'draft') 
+      ORDER BY s.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.post("/api/approvals/stores/:id", requireAdmin, async (req, res) => {
+  const { status } = req.body;
+  try {
+    await pool.query("UPDATE stores SET status = $1 WHERE id = $2", [status, req.params.id]);
+    try {
+      const adminEmail = req.adminEmail || "unknown";
+      await pool.query(
+        "INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)",
+        ["admin", adminEmail, `${status} store ${req.params.id}`, JSON.stringify({ status })]
+      );
+    } catch (e) {
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/approvals/services", requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.*, p.username as owner_username 
+      FROM services s 
+      LEFT JOIN profiles p ON COALESCE(s.owner_id, s.provider_id) = p.id 
+      WHERE s.status IN ('pending', 'draft') 
+      ORDER BY s.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.post("/api/approvals/services/:id", requireAdmin, async (req, res) => {
+  const { status } = req.body;
+  try {
+    await pool.query("UPDATE services SET status = $1 WHERE id = $2", [status, req.params.id]);
+    try {
+      const adminEmail = req.adminEmail || "unknown";
+      await pool.query(
+        "INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)",
+        ["admin", adminEmail, `${status} service ${req.params.id}`, JSON.stringify({ status })]
+      );
+    } catch (e) {
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 app.get("/api/dashboard/stats", requireAdmin, async (req, res) => {
   try {
     const adminCount = await pool.query("SELECT COUNT(*) FROM admin_users");
@@ -1023,7 +1120,17 @@ app.get("/api/dashboard/stats", requireAdmin, async (req, res) => {
          SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
       ) sub
     `);
+    const stores = await pool.query("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active FROM stores");
+    const services = await pool.query("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active FROM services");
+    const pendingStores = await pool.query("SELECT COUNT(*) FROM stores WHERE status = 'pending'");
+    const pendingServices = await pool.query("SELECT COUNT(*) FROM services WHERE status = 'pending'");
     res.json({
+      storesTotal: parseInt(stores.rows[0].total) || 0,
+      storesActive: parseInt(stores.rows[0].active) || 0,
+      servicesTotal: parseInt(services.rows[0].total) || 0,
+      servicesActive: parseInt(services.rows[0].active) || 0,
+      pendingStores: parseInt(pendingStores.rows[0].count) || 0,
+      pendingServices: parseInt(pendingServices.rows[0].count) || 0,
       activeAdmins: parseInt(adminCount.rows[0].count, 10) || 0,
       monthlyReferrals: parseInt(referrals.rows[0].refs, 10) || 0,
       todayTransactions: parseInt(transactions.rows[0].total, 10) || 0
