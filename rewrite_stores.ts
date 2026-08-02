@@ -1,4 +1,6 @@
+import fs from 'fs';
 
+const code = `
 import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import { Check, X, Building, ShieldCheck, ExternalLink, BadgeCheck, Store, ShieldAlert, AlertTriangle } from 'lucide-react';
@@ -26,7 +28,7 @@ export default function Stores() {
 
   const handleAction = async (id: string, action: 'approve' | 'reject' | 'verify' | 'revoke' | 'suspend') => {
     try {
-      await post(`/api/approvals/stores/${id}/${action}`, {});
+      await post(\`/api/approvals/stores/\${id}/\${action}\`, {});
       fetchData();
     } catch (err: any) {
       alert("Error: " + err.message);
@@ -73,7 +75,7 @@ export default function Stores() {
                         <h3 className="font-bold text-slate-800 text-xl">{store.name}</h3>
                         {store.is_plus_verified && <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1"><ShieldCheck className="w-3 h-3"/> Plus Verified</span>}
                         {store.subscription_tier === 'Membership' && <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">Plus User</span>}
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${store.status === 'active' ? 'bg-emerald-100 text-emerald-700' : store.status === 'rejected' || store.status === 'suspended' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                        <span className={\`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider \${store.status === 'active' ? 'bg-emerald-100 text-emerald-700' : store.status === 'rejected' || store.status === 'suspended' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}\`}>
                           {store.status}
                         </span>
                       </div>
@@ -221,3 +223,6 @@ export default function Stores() {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/pages/Stores.tsx', code);

@@ -1,4 +1,6 @@
+import fs from 'fs';
 
+const code = `
 import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import { Check, X, Building, Briefcase, ExternalLink, ShieldCheck, MoreVertical, Trash2, BadgeCheck } from 'lucide-react';
@@ -36,7 +38,7 @@ export default function Approvals() {
 
   const handleAction = async (type: 'stores' | 'services', id: string, action: 'approve' | 'reject' | 'verify') => {
     try {
-      await post(`/api/approvals/${type}/${id}/${action}`, {});
+      await post(\`/api/approvals/\${type}/\${id}/\${action}\`, {});
       fetchData();
     } catch (err: any) {
       alert("Error: " + err.message);
@@ -46,7 +48,7 @@ export default function Approvals() {
   const handleDelete = async (type: 'stores' | 'services', id: string) => {
     if (window.confirm("Are you sure you want to completely delete this entry? This action cannot be undone.")) {
       try {
-        await del(`/api/approvals/${type}/${id}`);
+        await del(\`/api/approvals/\${type}/\${id}\`);
         fetchData();
       } catch (err: any) {
         alert("Error: " + err.message);
@@ -350,3 +352,6 @@ export default function Approvals() {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/pages/Approvals.tsx', code);

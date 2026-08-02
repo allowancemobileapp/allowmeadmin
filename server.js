@@ -772,8 +772,20 @@ app.post("/api/auth/verify", async (req, res) => {
 });
 app.get("/api/stores", requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query("SELECT s.*, p.username, p.full_name as owner_name FROM stores s LEFT JOIN profiles p ON s.owner_id = p.id ORDER BY s.created_at DESC");
-    res.json(result.rows);
+    const result = await pool.query(`
+      SELECT s.*, p.username, p.username as owner_username, p.full_name as owner_name, p.subscription_tier 
+      FROM stores s 
+      LEFT JOIN profiles p ON s.owner_id = p.id 
+      ORDER BY s.created_at DESC
+    `);
+    const stores = result.rows;
+    for (let store of stores) {
+      const creds = await pool.query("SELECT * FROM store_credentials WHERE store_id = $1", [store.id]);
+      store.credentials = creds.rows;
+      const prods = await pool.query("SELECT * FROM store_products WHERE store_id = $1", [store.id]);
+      store.products = prods.rows;
+    }
+    res.json(stores);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -788,8 +800,18 @@ app.delete("/api/stores/:id", requireAdmin, async (req, res) => {
 });
 app.get("/api/services", requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query("SELECT s.*, p.username, p.full_name as owner_name FROM services s LEFT JOIN profiles p ON COALESCE(s.owner_id, s.provider_id) = p.id ORDER BY s.created_at DESC");
-    res.json(result.rows);
+    const result = await pool.query(`
+      SELECT s.*, p.username, p.username as owner_username, p.full_name as owner_name, p.subscription_tier 
+      FROM services s 
+      LEFT JOIN profiles p ON COALESCE(s.owner_id, s.provider_id) = p.id 
+      ORDER BY s.created_at DESC
+    `);
+    const services = result.rows;
+    for (let service of services) {
+      const prods = await pool.query("SELECT * FROM service_offerings WHERE service_id = $1", [service.id]);
+      service.offerings = prods.rows;
+    }
+    res.json(services);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1043,26 +1065,61 @@ app.get("/api/transactions", requireAdmin, async (req, res) => {
 app.get("/api/approvals/stores", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT s.*, p.username as owner_username 
+      SELECT s.*, p.username as owner_username, p.subscription_tier
       FROM stores s 
       LEFT JOIN profiles p ON s.owner_id = p.id 
       WHERE s.status IN ('pending', 'draft') 
       ORDER BY s.created_at DESC
     `);
-    res.json(result.rows);
+    const stores = result.rows;
+    for (let store of stores) {
+      const creds = await pool.query("SELECT * FROM store_credentials WHERE store_id = $1", [store.id]);
+      store.credentials = creds.rows;
+      const prods = await pool.query("SELECT * FROM store_products WHERE store_id = $1", [store.id]);
+      store.products = prods.rows;
+    }
+    res.json(stores);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-app.post("/api/approvals/stores/:id", requireAdmin, async (req, res) => {
-  const { status } = req.body;
+app.post("/api/approvals/stores/:id/:action", requireAdmin, async (req, res) => {
+  const { action } = req.params;
+  const storeId = req.params.id;
   try {
-    await pool.query("UPDATE stores SET status = $1 WHERE id = $2", [status, req.params.id]);
+    const storeRes = await pool.query(`
+      SELECT s.*, p.subscription_tier 
+      FROM stores s 
+      LEFT JOIN profiles p ON s.owner_id = p.id 
+      WHERE s.id = $1
+    `, [storeId]);
+    if (storeRes.rows.length === 0) {
+      return res.status(404).json({ error: "Store not found" });
+    }
+    const store = storeRes.rows[0];
+    const credsRes = await pool.query("SELECT * FROM store_credentials WHERE store_id = $1 AND kind = 'cac'", [storeId]);
+    const hasCac = credsRes.rows.length > 0 || !!store.registration_document_url;
+    const isPlus = store.subscription_tier === "Membership";
+    const currentEmail = (req.headers["x-admin-email"] || "").toLowerCase();
+    if ((action === "verify" || action === "revoke") && currentEmail !== "allowancemobileapp@gmail.com") {
+      return res.status(403).json({ error: "Only the root admin (allowancemobileapp@gmail.com) can verify or revoke stores." });
+    }
+    if (action === "approve") {
+      await pool.query("UPDATE stores SET status = 'active' WHERE id = $1", [storeId]);
+    } else if (action === "verify") {
+      await pool.query("UPDATE stores SET is_plus_verified = true, status = 'active' WHERE id = $1", [storeId]);
+    } else if (action === "revoke") {
+      await pool.query("UPDATE stores SET is_plus_verified = false WHERE id = $1", [storeId]);
+    } else if (action === "suspend") {
+      await pool.query("UPDATE stores SET status = 'suspended', is_plus_verified = false WHERE id = $1", [storeId]);
+    } else if (action === "reject") {
+      await pool.query("UPDATE stores SET status = 'rejected' WHERE id = $1", [storeId]);
+    }
     try {
       const adminEmail = req.adminEmail || "unknown";
       await pool.query(
         "INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)",
-        ["admin", adminEmail, `${status} store ${req.params.id}`, JSON.stringify({ status })]
+        ["admin", adminEmail, `${action} store ${storeId}`, JSON.stringify({ action })]
       );
     } catch (e) {
     }
@@ -1071,29 +1128,47 @@ app.post("/api/approvals/stores/:id", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+app.delete("/api/approvals/stores/:id", requireAdmin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM stores WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 app.get("/api/approvals/services", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT s.*, p.username as owner_username 
+      SELECT s.*, p.username as owner_username, p.subscription_tier
       FROM services s 
       LEFT JOIN profiles p ON COALESCE(s.owner_id, s.provider_id) = p.id 
       WHERE s.status IN ('pending', 'draft') 
       ORDER BY s.created_at DESC
     `);
-    res.json(result.rows);
+    const services = result.rows;
+    for (let service of services) {
+      const prods = await pool.query("SELECT * FROM service_offerings WHERE service_id = $1", [service.id]);
+      service.offerings = prods.rows;
+    }
+    res.json(services);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-app.post("/api/approvals/services/:id", requireAdmin, async (req, res) => {
-  const { status } = req.body;
+app.post("/api/approvals/services/:id/:action", requireAdmin, async (req, res) => {
+  const { action } = req.params;
+  const serviceId = req.params.id;
   try {
-    await pool.query("UPDATE services SET status = $1 WHERE id = $2", [status, req.params.id]);
+    let newStatus = action;
+    if (action === "approve") newStatus = "active";
+    else if (action === "suspend") newStatus = "suspended";
+    else if (action === "reject") newStatus = "rejected";
+    await pool.query("UPDATE services SET status = $1 WHERE id = $2", [newStatus, serviceId]);
     try {
       const adminEmail = req.adminEmail || "unknown";
       await pool.query(
         "INSERT INTO system_logs (type, admin_email, action, details) VALUES ($1, $2, $3, $4)",
-        ["admin", adminEmail, `${status} service ${req.params.id}`, JSON.stringify({ status })]
+        ["admin", adminEmail, `${action} service ${serviceId}`, JSON.stringify({ action })]
       );
     } catch (e) {
     }

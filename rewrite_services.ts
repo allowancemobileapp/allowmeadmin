@@ -1,4 +1,6 @@
+import fs from 'fs';
 
+const code = `
 import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import { Check, X, Briefcase, ExternalLink, ShieldCheck, AlertTriangle } from 'lucide-react';
@@ -26,7 +28,7 @@ export default function Services() {
 
   const handleAction = async (id: string, action: 'approve' | 'reject' | 'suspend') => {
     try {
-      await post(`/api/approvals/services/${id}/${action}`, {});
+      await post(\`/api/approvals/services/\${id}/\${action}\`, {});
       fetchData();
     } catch (err: any) {
       alert("Error: " + err.message);
@@ -72,7 +74,7 @@ export default function Services() {
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <h3 className="font-bold text-slate-800 text-xl">{service.title || service.category_tag || "Unnamed Service"}</h3>
                         {service.subscription_tier === 'Membership' && <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">Plus User</span>}
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${service.status === 'active' ? 'bg-emerald-100 text-emerald-700' : service.status === 'rejected' || service.status === 'suspended' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                        <span className={\`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider \${service.status === 'active' ? 'bg-emerald-100 text-emerald-700' : service.status === 'rejected' || service.status === 'suspended' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}\`}>
                           {service.status}
                         </span>
                       </div>
@@ -180,3 +182,6 @@ export default function Services() {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/pages/Services.tsx', code);
