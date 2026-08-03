@@ -19,7 +19,8 @@ import {
   BookOpen,
   UserSquare,
   Menu,
-  X
+  X,
+  LineChart
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -51,6 +52,7 @@ import Library from './pages/Library';
 import Stores from './pages/Stores';
 import Services from './pages/Services';
 import Metadata from './pages/Metadata';
+import Analytics from './pages/Analytics';
 import Approvals from './pages/Approvals';
 import UsersPage from './pages/UsersPage';
 
@@ -78,6 +80,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
     { to: '/notifications', label: 'Notifications', icon: Bell, id: 'notifications' },
     { to: '/approvals', label: 'Pending Approvals', icon: Store, id: 'approvals' },
     { to: '/metadata', label: 'System Metadata', icon: Package, id: 'metadata' },
+    { to: '/analytics', label: 'Analytics & Growth', icon: LineChart, id: 'analytics' },
   ];
 
   const allowedPages = permissions?.pages || [];
@@ -323,6 +326,7 @@ function AppRouter() {
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/approvals" element={<Approvals />} />
             <Route path="/metadata" element={<Metadata />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>

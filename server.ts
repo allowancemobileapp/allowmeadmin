@@ -218,7 +218,7 @@ app.get('/api/services', requireAdmin, async (req, res) => {
     `);
     const services = result.rows;
     for (let service of services) {
-      const prods = await pool.query('SELECT * FROM service_offerings WHERE service_id = $1', [service.id]);
+      const prods = await pool.query('SELECT * FROM service_catalog WHERE service_id = $1', [service.id]);
       service.offerings = prods.rows;
     }
     res.json(services);
@@ -383,6 +383,24 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
        total_schools = parseInt(schoolRes.rows[0].count);
     } catch(e) {}
 
+    // Stores
+    let total_stores = 0;
+    let active_stores = 0;
+    try {
+       const storesRes = await pool.query("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active FROM stores");
+       total_stores = parseInt(storesRes.rows[0].total) || 0;
+       active_stores = parseInt(storesRes.rows[0].active) || 0;
+    } catch(e) {}
+
+    // Services
+    let total_services = 0;
+    let active_services = 0;
+    try {
+       const servicesRes = await pool.query("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active FROM services");
+       total_services = parseInt(servicesRes.rows[0].total) || 0;
+       active_services = parseInt(servicesRes.rows[0].active) || 0;
+    } catch(e) {}
+
     // Tickets
     let active_tickets = 0;
     try {
@@ -454,7 +472,11 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
        active_gists,
        total_schools,
        total_revenue,
-       revenue_today
+       revenue_today,
+       total_stores,
+       active_stores,
+       total_services,
+       active_services
     });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -834,6 +856,123 @@ app.post('/api/coupons', requireAdmin, async (req, res) => {
   }
 });
 
+
+// -- Analytics Data for Graphs --
+app.get('/api/analytics', requireAdmin, async (req, res) => {
+  try {
+    const monthsQuery = `
+      WITH months AS (
+        SELECT generate_series(
+          date_trunc('month', CURRENT_DATE - INTERVAL '11 months'),
+          date_trunc('month', CURRENT_DATE),
+          '1 month'::interval
+        ) as month
+      )
+      SELECT month FROM months
+    `;
+    
+    // Users
+    const usersQuery = `
+      SELECT date_trunc('month', created_at) as month, COUNT(*) as count
+      FROM profiles
+      WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
+      GROUP BY month
+    `;
+    
+    // Revenue
+    const revenueQuery = `
+      SELECT month, SUM(amount) as amount FROM (
+         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount / 100), 0) as amount 
+         FROM membership_payments 
+         WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
+         GROUP BY month
+         UNION ALL
+         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid), 0) as amount 
+         FROM gists 
+         WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months') AND amount_paid > 0
+         GROUP BY month
+         UNION ALL
+         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid), 0) as amount 
+         FROM ticket_purchases 
+         WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months') AND amount_paid > 0
+         GROUP BY month
+      ) sub GROUP BY month
+    `;
+
+    // Stores
+    const storesQuery = `
+      SELECT date_trunc('month', created_at) as month, COUNT(*) as count
+      FROM stores
+      WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
+      GROUP BY month
+    `;
+
+    // Services
+    const servicesQuery = `
+      SELECT date_trunc('month', created_at) as month, COUNT(*) as count
+      FROM services
+      WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
+      GROUP BY month
+    `;
+
+    // Members (Subscribers)
+    const membersQuery = `
+      SELECT date_trunc('month', created_at) as month, COUNT(DISTINCT user_id) as count
+      FROM membership_payments
+      WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
+      GROUP BY month
+    `;
+
+    // Library (Gists + Tickets)
+    const libraryQuery = `
+      SELECT month, SUM(count) as count FROM (
+         SELECT date_trunc('month', created_at) as month, COUNT(*) as count
+         FROM gists
+         WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
+         GROUP BY month
+         UNION ALL
+         SELECT date_trunc('month', created_at) as month, COUNT(*) as count
+         FROM tickets
+         WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
+         GROUP BY month
+      ) sub GROUP BY month
+    `;
+
+    const [monthsRes, usersRes, revenueRes, storesRes, servicesRes, membersRes, libraryRes] = await Promise.all([
+      pool.query(monthsQuery),
+      pool.query(usersQuery),
+      pool.query(revenueQuery),
+      pool.query(storesQuery),
+      pool.query(servicesQuery),
+      pool.query(membersQuery),
+      pool.query(libraryQuery)
+    ]);
+
+    const data = monthsRes.rows.map(row => {
+      const monthStr = row.month.toISOString();
+      const userMatch = usersRes.rows.find((u: any) => u.month && u.month.toISOString() === monthStr);
+      const revMatch = revenueRes.rows.find((r: any) => r.month && r.month.toISOString() === monthStr);
+      const storeMatch = storesRes.rows.find((s: any) => s.month && s.month.toISOString() === monthStr);
+      const serviceMatch = servicesRes.rows.find((s: any) => s.month && s.month.toISOString() === monthStr);
+      const memberMatch = membersRes.rows.find((m: any) => m.month && m.month.toISOString() === monthStr);
+      const libraryMatch = libraryRes.rows.find((l: any) => l.month && l.month.toISOString() === monthStr);
+
+      return {
+        month: row.month.toLocaleString('default', { month: 'short', year: 'numeric' }),
+        users: parseInt(userMatch?.count || 0),
+        revenue: parseFloat(revMatch?.amount || 0),
+        stores: parseInt(storeMatch?.count || 0),
+        services: parseInt(serviceMatch?.count || 0),
+        members: parseInt(memberMatch?.count || 0),
+        libraryItems: parseInt(libraryMatch?.count || 0)
+      };
+    });
+
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // Vite Middleware and Dev Server Output (local only)
 if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
   import("vite").then(async ({ createServer: createViteServer }) => {

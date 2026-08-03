@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "Allowance Admin Workspace",
+  "description": "Admin dashboard for the Allowance mobile app to manage and monitor live stores, services, approvals, and platform statistics.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
