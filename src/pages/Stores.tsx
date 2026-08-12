@@ -40,7 +40,7 @@ export default function Stores() {
           <div className="bg-indigo-100 p-2 rounded-lg">
             <Store className="w-6 h-6 text-indigo-600" />
           </div>
-          <h2 className="text-2xl font-bold text-slate-800">Stores</h2>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200">Stores</h2>
         </div>
       </div>
 
@@ -48,21 +48,21 @@ export default function Stores() {
         <div className="py-20 text-center text-slate-400">Loading...</div>
       ) : (
         <div className="space-y-4">
-          {stores.length === 0 && <p className="py-10 text-center text-slate-500 bg-slate-50 rounded-xl border border-slate-200 border-dashed">No stores found.</p>}
+          {stores.length === 0 && <p className="py-10 text-center text-slate-500 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 border-dashed">No stores found.</p>}
           {stores.map(store => {
             const isExpanded = expandedId === store.id;
             
             return (
-              <div key={store.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              <div key={store.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
                 {/* Header (Clickable) */}
                 <div 
-                  className="p-5 border-b border-slate-100 flex gap-4 cursor-pointer hover:bg-slate-50 transition"
+                  className="p-5 border-b border-slate-100 flex gap-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition"
                   onClick={() => setExpandedId(isExpanded ? null : store.id)}
                 >
                   {store.avatar_url ? (
-                    <img src={store.avatar_url} className="w-16 h-16 rounded-xl object-cover bg-slate-100 shrink-0 border border-slate-200" />
+                    <img src={store.avatar_url} className="w-16 h-16 rounded-xl object-cover bg-slate-100 dark:bg-slate-800/50 shrink-0 border border-slate-200 dark:border-slate-800" />
                   ) : (
-                    <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 border border-slate-200 text-slate-400">
+                    <div className="w-16 h-16 rounded-xl bg-slate-100 dark:bg-slate-800/50 flex items-center justify-center shrink-0 border border-slate-200 dark:border-slate-800 text-slate-400">
                       <Building className="w-6 h-6" />
                     </div>
                   )}
@@ -70,7 +70,7 @@ export default function Stores() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <h3 className="font-bold text-slate-800 text-xl">{store.name}</h3>
+                        <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xl">{store.name}</h3>
                         {store.is_plus_verified && <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1"><ShieldCheck className="w-3 h-3"/> Plus Verified</span>}
                         {store.subscription_tier === 'Membership' && <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">Plus User</span>}
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${store.status === 'active' ? 'bg-emerald-100 text-emerald-700' : store.status === 'rejected' || store.status === 'suspended' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -78,7 +78,7 @@ export default function Stores() {
                         </span>
                       </div>
                     </div>
-                    <p className="text-sm text-slate-600 line-clamp-1">{store.description || "No description provided."}</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-1">{store.description || "No description provided."}</p>
                     <div className="text-xs text-slate-400 mt-1">
                       Owner: @{store.owner_username || store.username || 'Unknown'} • Region: {store.primary_region || 'N/A'}
                     </div>
@@ -92,7 +92,7 @@ export default function Stores() {
                       <div className="space-y-4">
                         <div>
                           <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 mb-2">General Info</h4>
-                          <div className="bg-white rounded-lg border border-slate-200 p-3 space-y-2 text-sm">
+                          <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-3 space-y-2 text-sm">
                             <div className="flex justify-between"><span className="text-slate-500">Owner:</span> <span className="font-medium">@{store.owner_username || store.username || 'Unknown'}</span></div>
                             <div className="flex justify-between"><span className="text-slate-500">Status:</span> <span className="font-medium capitalize">{store.status}</span></div>
                             <div className="flex justify-between"><span className="text-slate-500">Region:</span> <span className="font-medium">{store.primary_region || 'N/A'}</span></div>
@@ -104,10 +104,10 @@ export default function Stores() {
 
                         <div>
                           <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 mb-2">Credentials & Documents</h4>
-                          <div className="bg-white rounded-lg border border-slate-200 p-3 space-y-3">
+                          <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-3 space-y-3">
                             {store.registration_document_url && (
                               <div className="flex items-center justify-between text-sm">
-                                <span className="text-slate-700 font-medium">Primary CAC / Doc</span>
+                                <span className="text-slate-700 dark:text-slate-300 font-medium">Primary CAC / Doc</span>
                                 <a href={store.registration_document_url} target="_blank" rel="noreferrer" className="text-indigo-600 font-medium hover:underline inline-flex items-center gap-1 text-xs">
                                   View File <ExternalLink className="w-3 h-3" />
                                 </a>
@@ -121,7 +121,7 @@ export default function Stores() {
                             {(store.credentials || []).map((cred: any, idx: number) => (
                               <div key={idx} className="flex items-center justify-between text-sm pt-2 border-t border-slate-100 first:border-0 first:pt-0">
                                 <div className="flex flex-col">
-                                  <span className="text-slate-700 font-medium">{cred.title}</span>
+                                  <span className="text-slate-700 dark:text-slate-300 font-medium">{cred.title}</span>
                                   <span className="text-[10px] uppercase text-slate-400 font-bold">{cred.kind}</span>
                                 </div>
                                 <a href={cred.file_url} target="_blank" rel="noreferrer" className="text-indigo-600 font-medium hover:underline inline-flex items-center gap-1 text-xs">
@@ -135,21 +135,21 @@ export default function Stores() {
 
                       <div>
                         <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 mb-2">Products / Catalog ({store.products?.length || 0})</h4>
-                        <div className="bg-white rounded-lg border border-slate-200 p-1 h-64 overflow-y-auto">
+                        <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1 h-64 overflow-y-auto">
                           {!store.products || store.products.length === 0 ? (
                             <div className="h-full flex items-center justify-center text-sm text-slate-400 italic">No products added yet.</div>
                           ) : (
                             <div className="divide-y divide-slate-100">
                               {store.products.map((prod: any) => (
-                                <div key={prod.id} className="p-3 hover:bg-slate-50 transition">
+                                <div key={prod.id} className="p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
                                   <div className="flex justify-between items-start mb-1">
-                                    <span className="font-bold text-slate-800 text-sm">{prod.name}</span>
+                                    <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">{prod.name}</span>
                                     <span className="font-bold text-emerald-600 text-sm">₦{prod.standard_price}</span>
                                   </div>
                                   {prod.description && <p className="text-xs text-slate-500 line-clamp-2 mb-2">{prod.description}</p>}
                                   <div className="flex gap-2 text-[10px] font-bold text-slate-500">
-                                    <span className="bg-slate-100 px-1.5 py-0.5 rounded">Supply: {prod.total_supply}</span>
-                                    <span className="bg-slate-100 px-1.5 py-0.5 rounded">MOQ: {prod.moq}</span>
+                                    <span className="bg-slate-100 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">Supply: {prod.total_supply}</span>
+                                    <span className="bg-slate-100 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">MOQ: {prod.moq}</span>
                                   </div>
                                 </div>
                               ))}
@@ -160,7 +160,7 @@ export default function Stores() {
                     </div>
 
                     {/* Actions */}
-                    <div className="p-4 bg-white flex flex-wrap gap-3">
+                    <div className="p-4 bg-white dark:bg-slate-900 flex flex-wrap gap-3">
                       {store.status === 'active' ? (
                         <>
                           <button 

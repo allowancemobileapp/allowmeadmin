@@ -94,14 +94,14 @@ export default function Meals() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-800">Master Meals</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Master Meals</h1>
           <p className="text-sm text-slate-500 mt-1">Manage global meal definitions.</p>
         </div>
         <div>
           <select 
             value={filterSection} 
             onChange={e=>setFilterSection(e.target.value)}
-            className="border border-slate-200 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 bg-white"
+            className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
           >
             <option value="">All Sections</option>
             {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -109,37 +109,37 @@ export default function Meals() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 max-w-2xl">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 flex justify-between items-center">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-6 max-w-2xl">
+        <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-4 flex justify-between items-center">
           {editingMeal ? 'Edit Meal' : 'Add Meal'}
           {editingMeal && <button type="button" onClick={handleCancelEdit} className="text-xs text-red-500">Cancel Edit</button>}
         </h2>
         <form onSubmit={handleAddOrEdit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Name</label>
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Name</label>
               <input 
                 type="text" required value={name} onChange={e=>setName(e.target.value)}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
+                className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" 
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Calories</label>
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Calories</label>
               <input 
                 type="number" step="0.01" required value={calories} onChange={e=>setCalories(e.target.value)}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
+                className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" 
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Section</label>
-              <select value={sectionId} onChange={e=>setSectionId(e.target.value)} className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Section</label>
+              <select value={sectionId} onChange={e=>setSectionId(e.target.value)} className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                   <option value="">Select Section</option>
                   {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Category</label>
-              <select value={categoryId} onChange={e=>setCategoryId(e.target.value)} className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Category</label>
+              <select value={categoryId} onChange={e=>setCategoryId(e.target.value)} className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                   <option value="">Select Category</option>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -151,9 +151,9 @@ export default function Meals() {
         </form>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
         <table className="w-full text-left text-sm whitespace-nowrap">
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
+          <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
             <tr>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Name</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Section</th>
@@ -165,7 +165,7 @@ export default function Meals() {
           <tbody className="divide-y divide-slate-100">
             {meals.map(m => (
               <tr key={m.id} className="hover:bg-slate-50/50">
-                <td className="px-6 py-4 text-slate-800 font-medium">{m.name}</td>
+                <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-medium">{m.name}</td>
                 <td className="px-6 py-4 text-slate-500">{m.section_name}</td>
                 <td className="px-6 py-4 text-slate-500">{m.category_id}</td>
                 <td className="px-6 py-4 text-slate-500 font-mono">{m.calorie_count}</td>

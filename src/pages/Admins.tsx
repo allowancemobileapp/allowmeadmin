@@ -131,63 +131,63 @@ export default function Admins() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Account Permissions</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Account Permissions</h1>
         <p className="text-sm text-slate-500 mt-1">Authorize new team members to access the workspace.</p>
       </div>
 
-      <div className={`bg-white border rounded-xl shadow-sm p-6 ${editingId ? 'border-2 border-indigo-500 ring-4 ring-indigo-50' : 'border-slate-200'}`}>
+      <div className={`bg-white dark:bg-slate-900 border rounded-xl shadow-sm p-6 ${editingId ? 'border-2 border-indigo-500 ring-4 ring-indigo-50' : 'border-slate-200 dark:border-slate-800'}`}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{editingId ? 'Edit Access' : 'Grant Access'}</h2>
+          <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">{editingId ? 'Edit Access' : 'Grant Access'}</h2>
           {editingId && <button onClick={resetForm} className="text-xs font-bold text-slate-500 hover:text-slate-800">CANCEL</button>}
         </div>
         {error && <div className="p-3 mb-4 text-sm bg-red-50 border border-red-200 text-red-600 rounded-md">{error}</div>}
         <form onSubmit={handleSave} className="space-y-6 max-w-3xl">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Email Address</label>
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Email Address</label>
               <input 
                 type="email" 
                 required 
                 value={email} 
                 onChange={e=>setEmail(e.target.value)}
                 disabled={!!editingId}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-slate-50" 
+                className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-slate-50" 
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Role Title</label>
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Role Title</label>
               <input 
                 type="text" 
                 required 
                 placeholder="e.g. CTO, Ranger"
                 value={title}
                 onChange={e=>setTitle(e.target.value)}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
               />
             </div>
           </div>
           
           <div className="border-t border-slate-100 pt-4">
-            <label className="font-semibold text-slate-600 text-sm block mb-3">Coupon Constraints</label>
+            <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm block mb-3">Coupon Constraints</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 font-medium cursor-pointer">
                 <input 
                   type="checkbox" 
                   checked={canCreateUnlimited}
                   onChange={(e) => setCanCreateUnlimited(e.target.checked)}
-                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
+                  className="rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500" 
                 />
                 Can generate unlimited coupons
               </label>
               {!canCreateUnlimited && (
                 <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium text-slate-700">Max Uses/Supply limit:</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Max Uses/Supply limit:</label>
                   <input
                     type="number"
                     min="1"
                     value={maxSupply}
                     onChange={e => setMaxSupply(parseInt(e.target.value) || 1)}
-                    className="border border-slate-200 rounded px-2 py-1 w-24 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="border border-slate-200 dark:border-slate-800 rounded px-2 py-1 w-24 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
               )}
@@ -195,15 +195,15 @@ export default function Admins() {
           </div>
           
           <div className="border-t border-slate-100 pt-4">
-            <label className="font-semibold text-slate-600 text-sm block mb-3">Page Access Permissions</label>
+            <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm block mb-3">Page Access Permissions</label>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {PAGE_MODULES.map(page => (
-                <label key={page.id} className="flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
+                <label key={page.id} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 font-medium cursor-pointer">
                   <input 
                     type="checkbox" 
                     checked={!!allowedPages[page.id]} 
                     onChange={() => togglePage(page.id)} 
-                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
+                    className="rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500" 
                   />
                   {page.label}
                 </label>
@@ -217,9 +217,9 @@ export default function Admins() {
         </form>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
         <table className="w-full text-left text-sm whitespace-nowrap">
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
+          <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
             <tr>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Email</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Title</th>
@@ -236,9 +236,9 @@ export default function Admins() {
               
               return (
                 <tr key={admin.id} className="hover:bg-slate-50/50">
-                  <td className="px-6 py-4 text-slate-800 font-medium">{admin.email}</td>
-                  <td className="px-6 py-4 text-slate-600">{admin.title || 'Admin'}</td>
-                  <td className="px-6 py-4 text-slate-600 font-medium text-xs">{couponStatus}</td>
+                  <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-medium">{admin.email}</td>
+                  <td className="px-6 py-4 text-slate-600 dark:text-slate-400">{admin.title || 'Admin'}</td>
+                  <td className="px-6 py-4 text-slate-600 dark:text-slate-400 font-medium text-xs">{couponStatus}</td>
                   <td className="px-6 py-4 text-slate-500 truncate max-w-xs" title={pages}>
                     {pages}
                   </td>
@@ -271,13 +271,13 @@ export default function Admins() {
 
       {revokingId && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Confirm Revocation</h3>
-            <p className="text-slate-600 mb-6">Are you sure you want to completely remove this user's access? This action is permanent and immediate.</p>
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">Confirm Revocation</h3>
+            <p className="text-slate-600 dark:text-slate-400 mb-6">Are you sure you want to completely remove this user's access? This action is permanent and immediate.</p>
             <div className="flex justify-end gap-3">
               <button 
                 onClick={() => setRevokingId(null)} 
-                className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-100 rounded-lg transition-colors"
+                className="px-4 py-2 text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded-lg transition-colors"
               >
                 Cancel
               </button>

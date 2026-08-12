@@ -66,15 +66,15 @@ export default function Analytics() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Growth Analytics & Projections</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Growth Analytics & Projections</h1>
         <p className="text-sm text-slate-500 mt-1">Visualizing historical data and projecting future trends.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* User Growth */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-800 mb-6">User Acquisition Over Time</h3>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-6">User Acquisition Over Time</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
@@ -97,8 +97,8 @@ export default function Analytics() {
         </div>
 
         {/* Revenue Growth */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-800 mb-6">Revenue Trend (₦)</h3>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-6">Revenue Trend (₦)</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
@@ -123,8 +123,8 @@ export default function Analytics() {
 
 
         {/* Subscribers / Members Growth */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-800 mb-6">Subscribers (Members) Over Time</h3>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-6">Subscribers (Members) Over Time</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
@@ -147,8 +147,8 @@ export default function Analytics() {
         </div>
 
         {/* Library Items Growth */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-800 mb-6">Library Items Created (Gists & Tickets)</h3>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-6">Library Items Created (Gists & Tickets)</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
@@ -166,8 +166,8 @@ export default function Analytics() {
         </div>
 
         {/* Stores & Services Growth */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm lg:col-span-2">
-          <h3 className="text-sm font-bold text-slate-800 mb-6">Stores & Services Onboarding</h3>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm lg:col-span-2">
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-6">Stores & Services Onboarding</h3>
           <div className="h-[350px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>

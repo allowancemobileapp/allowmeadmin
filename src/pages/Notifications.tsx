@@ -46,38 +46,38 @@ export default function Notifications() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Broadcast Notifications</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Broadcast Notifications</h1>
         <p className="text-sm text-slate-500 mt-1">Send official announcements to all registered users.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-2xl shadow-sm">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Compose Message</h2>
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 max-w-2xl shadow-sm">
+        <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-4">Compose Message</h2>
         
         {success && <div className="p-4 mb-6 text-sm bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg font-medium">{success}</div>}
         {error && <div className="p-4 mb-6 text-sm bg-red-50 border border-red-200 text-red-600 rounded-lg font-medium">{error}</div>}
         
         <form onSubmit={handleSend} className="space-y-4">
           <div className="flex flex-col gap-1">
-            <label className="font-semibold text-slate-600 text-sm">Notification Title</label>
+            <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Notification Title</label>
             <input 
               type="text" 
               required 
               value={title} 
               onChange={e=>setTitle(e.target.value)}
               placeholder="e.g., Allowance App Update v2.0"
-              className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+              className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
             />
           </div>
           
           <div className="flex flex-col gap-1">
-            <label className="font-semibold text-slate-600 text-sm">Message Body</label>
+            <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Message Body</label>
             <textarea 
               required 
               rows={5}
               value={message} 
               onChange={e=>setMessage(e.target.value)}
               placeholder="Type your official announcement here..."
-              className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y" 
+              className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y" 
             />
           </div>
           
@@ -94,16 +94,16 @@ export default function Notifications() {
         </form>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Past Broadcasts</h2>
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+        <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-4">Past Broadcasts</h2>
         <div className="space-y-4">
           {notifications.map(n => (
-            <div key={n.id} className="p-4 border border-slate-100 bg-slate-50 rounded-lg">
+            <div key={n.id} className="p-4 border border-slate-100 bg-slate-50 dark:bg-slate-950 rounded-lg">
               <div className="flex justify-between items-start">
-                <h3 className="font-bold text-slate-800 text-sm">{n.title}</h3>
+                <h3 className="font-bold text-slate-800 dark:text-slate-200 text-sm">{n.title}</h3>
                 <span className="text-[10px] text-slate-400 font-mono">{new Date(n.created_at).toLocaleString()}</span>
               </div>
-              <p className="text-sm text-slate-600 mt-2">{n.message}</p>
+              <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">{n.message}</p>
               <div className="text-[10px] text-slate-400 mt-2">Sent by: {n.sent_by}</div>
             </div>
           ))}

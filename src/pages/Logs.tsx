@@ -120,7 +120,7 @@ export default function Logs() {
     <div className="space-y-6 h-full flex flex-col pt-2">
       <div className="flex justify-between items-center px-2">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">📋 Activity Logs</h1>
+          <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-200">📋 Activity Logs</h1>
           <p className="text-slate-500 mt-1">Review system activity, actions, and user events.</p>
         </div>
       </div>

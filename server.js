@@ -233,7 +233,7 @@ function createLegacyRouter(pool2) {
 import { Router } from "express";
 import multer from "multer";
 var storage = multer.memoryStorage();
-var upload = multer({ storage });
+var upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 function createLibraryRouter(pool2) {
   const router = Router();
   const logAdminAction2 = async (req, action, details) => {
@@ -255,7 +255,14 @@ function createLibraryRouter(pool2) {
       res.status(500).json({ error: e.message });
     }
   };
-  router.post("/upload", upload.single("file"), handleReq(async (req, res) => {
+  router.post("/upload", (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ error: "Upload error: " + err.message });
+      }
+      next();
+    });
+  }, handleReq(async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
@@ -410,7 +417,17 @@ function createLibraryRouter(pool2) {
         const fs = await import("fs");
         const os = await import("os");
         const path2 = await import("path");
-        const tempFilePath = path2.join(os.tmpdir(), `gemini_upload_${Date.now()}`);
+        let ext = "";
+        try {
+          if (file_url) ext = path2.extname(new URL(file_url).pathname);
+        } catch (e) {
+        }
+        if (!ext) {
+          if (mimeType.includes("wordprocessingml.document")) ext = ".docx";
+          else if (mimeType.includes("presentationml.presentation")) ext = ".pptx";
+          else if (mimeType.includes("spreadsheetml.sheet")) ext = ".xlsx";
+        }
+        const tempFilePath = path2.join(os.tmpdir(), `gemini_upload_${Date.now()}${ext}`);
         fs.writeFileSync(tempFilePath, buffer);
         const supportedGeminiMimes = [
           "application/pdf",
@@ -440,10 +457,19 @@ function createLibraryRouter(pool2) {
             }
           });
         } else {
+          let text = "";
           try {
-            const officeparser = await import("officeparser");
-            const parsed = await officeparser.parseOffice(tempFilePath);
-            const text = parsed.toText();
+            if (mimeType === "application/msword" || mimeType === "application/vnd.ms-excel") {
+              const anyText = await import("any-text");
+              text = await anyText.default.getText(tempFilePath);
+            } else if (mimeType === "application/vnd.ms-powerpoint") {
+              const ppt2text = await import("ppt-to-text");
+              text = ppt2text.default.extractText(tempFilePath);
+            } else {
+              const officeparser = await import("officeparser");
+              const parsed = await officeparser.parseOffice(tempFilePath);
+              text = parsed.toText();
+            }
             fs.unlinkSync(tempFilePath);
             contents.push({ text: `Document content:
 
@@ -459,7 +485,7 @@ ${text}` });
       while (retries > 0) {
         try {
           response = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
+            model: "gemini-3.6-flash",
             contents,
             config: {
               httpOptions: { timeout: 12e4 },
@@ -483,8 +509,10 @@ ${text}` });
           break;
         } catch (err) {
           retries--;
-          if (retries === 0 || !(err.message?.includes("503") || err.message?.includes("429") || err.message?.includes("abort") || err.message?.includes("timeout") || err.message?.includes("fetch failed"))) {
-            throw new Error(`AI Model Error: ${err.message}`);
+          const msg = (err.message || err.toString() || "").toLowerCase();
+          const isTransient = msg.includes("503") || msg.includes("429") || msg.includes("abort") || msg.includes("timeout") || msg.includes("fetch failed") || msg.includes("service unavailable") || err.status === 503 || err.status === 429;
+          if (retries === 0 || !isTransient) {
+            throw new Error(`AI Model Error: ${err.message || JSON.stringify(err)}`);
           }
           await new Promise((r) => setTimeout(r, 2e3));
         }
@@ -644,7 +672,8 @@ dotenv.config();
 var app = express2();
 var PORT = 3e3;
 app.use(cors());
-app.use(express2.json());
+app.use(express2.json({ limit: "50mb" }));
+app.use(express2.urlencoded({ limit: "50mb", extended: true }));
 var envDbUrl = process.env.DATABASE_URL;
 var connectionString = envDbUrl && !envDbUrl.includes("localhost") && !envDbUrl.includes("127.0.0.1") ? envDbUrl : "postgresql://postgres.quuazutreaitqoquzolg:James2002eze%23@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
 var isLocalDb = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");

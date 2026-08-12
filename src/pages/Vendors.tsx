@@ -59,14 +59,14 @@ export default function Vendors() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-800">Vendors</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Vendors</h1>
           <p className="text-sm text-slate-500 mt-1">Manage vendors and their specific menus.</p>
         </div>
         <div>
           <select 
             value={filterSchoolId} 
             onChange={e=>setFilterSchoolId(e.target.value)}
-            className="border border-slate-200 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 font-medium bg-white"
+            className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 font-medium bg-white dark:bg-slate-900"
           >
             <option value="">-- Choose a School First --</option>
             {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -75,29 +75,29 @@ export default function Vendors() {
       </div>
 
       {!filterSchoolId ? (
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-12 text-center">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-12 text-center">
              <Store className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-             <h3 className="text-lg font-bold text-slate-700">No School Selected</h3>
+             <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">No School Selected</h3>
              <p className="text-slate-500 mt-2">Please select a school from the top right dropdown to view and manage its vendors.</p>
         </div>
       ) : (
         <>
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 max-w-2xl">
-            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Add Vendor</h2>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-6 max-w-2xl">
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-4">Add Vendor</h2>
             <form onSubmit={handleAdd} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1">
-                    <label className="font-semibold text-slate-600 text-sm">Name</label>
+                    <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Name</label>
                     <input 
                       type="text" required value={name} onChange={e=>setName(e.target.value)}
-                      className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                      className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                     />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="font-semibold text-slate-600 text-sm">Phone Number</label>
+                    <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Phone Number</label>
                     <input 
                       type="text" value={phone} onChange={e=>setPhone(e.target.value)}
-                      className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                      className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                     />
                   </div>
               </div>
@@ -107,9 +107,9 @@ export default function Vendors() {
             </form>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
             <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
+              <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
                 <tr>
                   <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Name</th>
                   <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Phone</th>
@@ -120,7 +120,7 @@ export default function Vendors() {
               <tbody className="divide-y divide-slate-100">
                 {vendors.map(v => (
                   <tr key={v.id} className="hover:bg-slate-50/50">
-                    <td className="px-6 py-4 text-slate-800 font-medium">{v.name}</td>
+                    <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-medium">{v.name}</td>
                     <td className="px-6 py-4 text-slate-500">{v.phone_number || '-'}</td>
                     <td className="px-6 py-4 text-slate-500">{v.school_id}</td>
                     <td className="px-6 py-4 flex items-center gap-4">

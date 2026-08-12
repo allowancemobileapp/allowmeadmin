@@ -3,7 +3,7 @@ import { Pool } from "pg";
 import multer from "multer";
 
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 export function createLibraryRouter(pool: Pool) {
   const router = Router();
@@ -27,7 +27,14 @@ export function createLibraryRouter(pool: Pool) {
     }
   };
 
-  router.post('/upload', upload.single('file'), handleReq(async (req, res) => {
+  router.post('/upload', (req, res, next) => {
+    upload.single('file')(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ error: "Upload error: " + err.message });
+      }
+      next();
+    });
+  }, handleReq(async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -215,7 +222,14 @@ export function createLibraryRouter(pool: Pool) {
         const fs = await import('fs');
         const os = await import('os');
         const path = await import('path');
-        const tempFilePath = path.join(os.tmpdir(), `gemini_upload_${Date.now()}`);
+        let ext = '';
+        try { if (file_url) ext = path.extname(new URL(file_url).pathname); } catch(e) {}
+        if (!ext) {
+          if (mimeType.includes('wordprocessingml.document')) ext = '.docx';
+          else if (mimeType.includes('presentationml.presentation')) ext = '.pptx';
+          else if (mimeType.includes('spreadsheetml.sheet')) ext = '.xlsx';
+        }
+        const tempFilePath = path.join(os.tmpdir(), `gemini_upload_${Date.now()}${ext}`);
         fs.writeFileSync(tempFilePath, buffer);
         
         const supportedGeminiMimes = [
@@ -237,11 +251,20 @@ export function createLibraryRouter(pool: Pool) {
             }
           });
         } else {
-          // Use officeparser for unsupported types like docx, pptx
+          // Parse documents
+          let text = '';
           try {
-            const officeparser = await import('officeparser');
-            const parsed = await officeparser.parseOffice(tempFilePath);
-            const text = parsed.toText();
+            if (mimeType === 'application/msword' || mimeType === 'application/vnd.ms-excel') {
+              const anyText = await import('any-text');
+              text = await anyText.default.getText(tempFilePath);
+            } else if (mimeType === 'application/vnd.ms-powerpoint') {
+              const ppt2text = await import('ppt-to-text');
+              text = ppt2text.default.extractText(tempFilePath);
+            } else {
+              const officeparser = await import('officeparser');
+              const parsed = await officeparser.parseOffice(tempFilePath);
+              text = parsed.toText();
+            }
             fs.unlinkSync(tempFilePath);
             contents.push({ text: `Document content:\n\n${text}` });
           } catch (e: any) {
@@ -256,7 +279,7 @@ export function createLibraryRouter(pool: Pool) {
       while (retries > 0) {
         try {
           response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: "gemini-3.6-flash",
             contents,
             config: {
               httpOptions: { timeout: 120000 },
@@ -280,8 +303,10 @@ export function createLibraryRouter(pool: Pool) {
           break; // success
         } catch (err: any) {
           retries--;
-          if (retries === 0 || !(err.message?.includes('503') || err.message?.includes('429') || err.message?.includes('abort') || err.message?.includes('timeout') || err.message?.includes('fetch failed'))) {
-            throw new Error(`AI Model Error: ${err.message}`);
+          const msg = (err.message || err.toString() || '').toLowerCase();
+          const isTransient = msg.includes('503') || msg.includes('429') || msg.includes('abort') || msg.includes('timeout') || msg.includes('fetch failed') || msg.includes('service unavailable') || err.status === 503 || err.status === 429;
+          if (retries === 0 || !isTransient) {
+            throw new Error(`AI Model Error: ${err.message || JSON.stringify(err)}`);
           }
           await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry
         }

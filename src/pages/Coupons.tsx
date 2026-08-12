@@ -52,17 +52,17 @@ export default function Coupons() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Coupon Generator</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Coupon Generator</h1>
         <p className="text-sm text-slate-500 mt-1">Manage discount codes and supply limits.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 flex flex-col max-w-2xl">
-        <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Coupon Engine</h3>
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-6 flex flex-col max-w-2xl">
+        <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-4">Coupon Engine</h3>
         {error && <div className="p-3 mb-4 text-sm bg-red-50 border border-red-200 text-red-600 rounded-md">{error}</div>}
         <form onSubmit={handleCreate} className="space-y-4 flex flex-col">
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Coupon Name (6 chars)</label>
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Coupon Name (6 chars)</label>
               <input 
                 type="text" 
                 maxLength={6}
@@ -71,15 +71,15 @@ export default function Coupons() {
                 placeholder="GIST50"
                 value={code} 
                 onChange={e=>setCode(e.target.value.toUpperCase())}
-                className="border border-slate-200 rounded px-3 py-2 w-full uppercase focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full uppercase focus:outline-none focus:ring-1 focus:ring-indigo-500" 
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="font-semibold text-slate-600 text-sm">Discount %</label>
+              <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Discount %</label>
               <select 
                 value={discountPercentage} 
                 onChange={e=>setDiscountPercentage(Number(e.target.value))}
-                className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 <option value={100}>100% Discount</option>
                 <option value={75}>75% Discount</option>
@@ -90,24 +90,24 @@ export default function Coupons() {
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="font-semibold text-slate-600 text-sm">Expiry Date</label>
+            <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Expiry Date</label>
             <input 
               type="datetime-local" 
               required 
               value={expiryDate} 
               onChange={e=>setExpiryDate(e.target.value)}
-              className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+              className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
             />
             {discountPercentage === 100 && <p className="text-[10px] text-amber-600 italic leading-tight bg-amber-50 p-2 border border-amber-100 rounded mt-1">Note: 100% discount codes cannot exceed 1 month expiry.</p>}
           </div>
           <div className="flex flex-col gap-2 border-t border-slate-100 pt-3 mt-1">
-            <label className="flex items-center gap-2 text-sm text-slate-700 font-medium">
-              <input type="checkbox" checked={unlimited} onChange={e=>setUnlimited(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 font-medium">
+              <input type="checkbox" checked={unlimited} onChange={e=>setUnlimited(e.target.checked)} className="rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500" />
               Unlimited Supply
             </label>
             {!unlimited && (
               <div className="flex flex-col gap-1 mt-1">
-                <label className="font-semibold text-slate-600 text-sm">Max Supply</label>
+                <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Max Supply</label>
                 <input 
                   type="number" 
                   max={500}
@@ -115,7 +115,7 @@ export default function Coupons() {
                   value={claimLimit} 
                   onChange={e=>setClaimLimit(e.target.value)}
                   placeholder="Max 500"
-                  className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                  className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                 />
               </div>
             )}
@@ -126,9 +126,9 @@ export default function Coupons() {
         </form>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
         <table className="w-full text-left text-sm whitespace-nowrap">
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
+          <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
             <tr>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Code</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Discount</th>
@@ -142,8 +142,8 @@ export default function Coupons() {
               const isExpired = new Date(coupon.expires_at) < new Date();
               return (
                 <tr key={coupon.id} className="hover:bg-slate-50/50">
-                  <td className="px-6 py-4 text-slate-800 font-mono font-bold tracking-wider">{coupon.code}</td>
-                  <td className="px-6 py-4 text-slate-800 font-medium">{coupon.discount_percentage}%</td>
+                  <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-mono font-bold tracking-wider">{coupon.code}</td>
+                  <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-medium">{coupon.discount_percentage}%</td>
                   <td className="px-6 py-4 text-slate-500">{coupon.claim_limit === -1 ? 'Unlimited' : coupon.claim_limit}</td>
                   <td className="px-6 py-4 text-indigo-600 font-medium">{coupon.claimed_count}</td>
                   <td className="px-6 py-4">

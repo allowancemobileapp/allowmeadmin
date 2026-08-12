@@ -1,3 +1,5 @@
+import { ThemeProvider } from "./components/ThemeProvider";
+import { ThemeToggle } from "./components/ThemeToggle";
 import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { 
@@ -100,7 +102,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
       )}>
         <div className="p-6 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-white">A</div>
+            <div className="h-8 w-8 bg-indigo-500 dark:bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-white">A</div>
             <span className="font-bold text-slate-100 tracking-tight text-xl">PRO</span>
           </div>
           <button className="md:hidden text-slate-400" onClick={() => setIsOpen(false)}>
@@ -148,18 +150,19 @@ function Layout({ children }: { children: React.ReactNode }) {
   const { title } = React.useContext(AuthContext);
 
   return (
-    <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden text-sm">
+    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 dark:text-slate-100 overflow-hidden text-sm">
       <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
       <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 bg-white border-b border-slate-200 px-4 md:px-8 flex items-center justify-between shadow-sm z-10 shrink-0">
+        <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 dark:border-slate-800 px-4 md:px-8 flex items-center justify-between shadow-sm z-10 shrink-0">
           <div className="flex items-center gap-4 md:gap-8">
-            <button className="md:hidden text-slate-600" onClick={() => setIsSidebarOpen(true)}>
+            <button className="md:hidden text-slate-600 dark:text-slate-400" onClick={() => setIsSidebarOpen(true)}>
                <Menu className="w-5 h-5" />
             </button>
-            <h1 className="text-lg font-semibold text-slate-800 hidden md:block">{title ? `${title} Control Panel` : 'Control Panel'}</h1>
+            <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-200 dark:text-slate-200 hidden md:block">{title ? `${title} Control Panel` : 'Control Panel'}</h1>
           </div>
           <div className="flex gap-4 items-center text-xs font-medium">
-            <span className="bg-slate-100 px-2 py-1 rounded text-slate-600 hidden sm:block">Uptime: 99.9%</span>
+            <ThemeToggle />
+            <span className="bg-slate-100 dark:bg-slate-800/50 px-2 py-1 rounded text-slate-600 dark:text-slate-400 hidden sm:block">Uptime: 99.9%</span>
             <span className="bg-emerald-100 px-2 py-1 rounded text-emerald-700">Auto-Accounting: ACTIVE</span>
           </div>
         </header>
@@ -188,11 +191,11 @@ function Login() {
   };
 
   return (
-    <div className="flex h-screen items-center justify-center bg-slate-50 font-sans text-slate-900">
-      <div className="w-full max-w-sm p-8 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col items-center">
+    <div className="flex h-screen items-center justify-center bg-slate-50 dark:bg-slate-950 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 dark:text-slate-100">
+      <div className="w-full max-w-sm p-8 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 dark:border-slate-800 shadow-sm flex flex-col items-center">
         <div className="flex items-center gap-3 mb-6 justify-center">
             <div className="h-8 w-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-white">A</div>
-            <span className="font-bold text-slate-900 tracking-tight text-xl">ALLOWANCE <span className="text-indigo-600">PRO</span></span>
+            <span className="font-bold text-slate-900 dark:text-slate-100 dark:text-white tracking-tight text-xl">ALLOWANCE <span className="text-indigo-600">PRO</span></span>
         </div>
         <p className="text-sm text-slate-500 mb-6 text-center">Sign in to access the administrator panel. Only authorized personnel.</p>
         <button onClick={handleLogin} disabled={loading} className="w-full py-3 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
@@ -294,14 +297,17 @@ function AppRouter() {
   };
 
   if (loading) {
-     return <div className="h-screen w-full flex items-center justify-center bg-slate-50"><p className="text-slate-500">Authenticating...</p></div>;
+     return <div className="h-screen w-full flex items-center justify-center bg-slate-50 dark:bg-slate-950"><p className="text-slate-500">Authenticating...</p></div>;
   }
 
   if (!email) {
-    return <AuthContext.Provider value={{ email, permissions, title, login, logout }}><Login /></AuthContext.Provider>;
+    return <ThemeProvider defaultTheme="system" storageKey="allowance-theme">
+    <AuthContext.Provider value={{ email, permissions, title, login, logout }}><Login /></AuthContext.Provider>
+    </ThemeProvider>;
   }
 
   return (
+    <ThemeProvider defaultTheme="system" storageKey="allowance-theme">
     <AuthContext.Provider value={{ email, permissions, title, login, logout }}>
       <BrowserRouter>
         <Layout>
@@ -332,6 +338,7 @@ function AppRouter() {
         </Layout>
       </BrowserRouter>
     </AuthContext.Provider>
+    </ThemeProvider>
   );
 }
 

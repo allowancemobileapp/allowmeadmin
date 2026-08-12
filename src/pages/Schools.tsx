@@ -81,14 +81,14 @@ export default function Schools() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-800">Schools</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Schools</h1>
           <p className="text-sm text-slate-500 mt-1">Manage schools.</p>
         </div>
         <div>
           <select 
             value={filterCountryId} 
             onChange={e=>setFilterCountryId(e.target.value)}
-            className="border border-slate-200 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 bg-white"
+            className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
           >
             <option value="">All Countries</option>
             {countries.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -96,39 +96,39 @@ export default function Schools() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 max-w-2xl">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 flex justify-between items-center">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-6 max-w-2xl">
+        <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-4 flex justify-between items-center">
           {editingSchool ? 'Edit School' : 'Add School'}
           {editingSchool && <button type="button" onClick={handleCancelEdit} className="text-xs text-red-500">Cancel Edit</button>}
         </h2>
         <form onSubmit={handleAddOrEdit} className="space-y-4">
           <div className="flex flex-col gap-1">
-            <label className="font-semibold text-slate-600 text-sm">Country</label>
-            <select required value={countryId} onChange={e=>setCountryId(e.target.value)} className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+            <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Country</label>
+            <select required value={countryId} onChange={e=>setCountryId(e.target.value)} className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                 <option value="">Select a country</option>
                 {countries.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="font-semibold text-slate-600 text-sm">Name</label>
+            <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Name</label>
             <input 
               type="text" required value={name} onChange={e=>setName(e.target.value)}
-              className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
+              className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" 
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1">
-                <label className="font-semibold text-slate-600 text-sm">Address</label>
+                <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Address</label>
                 <input 
                   type="text" value={address} onChange={e=>setAddress(e.target.value)}
-                  className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
+                  className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" 
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="font-semibold text-slate-600 text-sm">Location</label>
+                <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">Location</label>
                 <input 
                   type="text" value={location} onChange={e=>setLocation(e.target.value)}
-                  className="border border-slate-200 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" 
+                  className="border border-slate-200 dark:border-slate-800 rounded px-3 py-2 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" 
                 />
               </div>
           </div>
@@ -138,9 +138,9 @@ export default function Schools() {
         </form>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
         <table className="w-full text-left text-sm whitespace-nowrap">
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
+          <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
             <tr>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Name</th>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Address</th>
@@ -152,7 +152,7 @@ export default function Schools() {
           <tbody className="divide-y divide-slate-100">
             {schools.map(s => (
               <tr key={s.id} className="hover:bg-slate-50/50">
-                <td className="px-6 py-4 text-slate-800 font-medium">{s.name}</td>
+                <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-medium">{s.name}</td>
                 <td className="px-6 py-4 text-slate-500">{s.address || '-'}</td>
                 <td className="px-6 py-4 text-slate-500">{s.location || '-'}</td>
                 <td className="px-6 py-4 text-slate-500">{s.vendor_count}</td>
