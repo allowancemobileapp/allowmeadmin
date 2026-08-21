@@ -675,7 +675,7 @@ app.use(cors());
 app.use(express2.json({ limit: "50mb" }));
 app.use(express2.urlencoded({ limit: "50mb", extended: true }));
 var envDbUrl = process.env.DATABASE_URL;
-var connectionString = envDbUrl && !envDbUrl.includes("localhost") && !envDbUrl.includes("127.0.0.1") ? envDbUrl : "postgresql://postgres.quuazutreaitqoquzolg:James2002eze%23@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
+var connectionString = envDbUrl && !envDbUrl.includes("localhost") && !envDbUrl.includes("127.0.0.1") ? envDbUrl : "postgresql://postgres:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
 var isLocalDb = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");
 var cleanConnectionString = connectionString.split("?")[0];
 var pool = new Pool({

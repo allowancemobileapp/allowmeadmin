@@ -22,10 +22,15 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Database connection
 const envDbUrl = process.env.DATABASE_URL;
-const connectionString = (envDbUrl && !envDbUrl.includes("localhost") && !envDbUrl.includes("127.0.0.1"))
-  ? envDbUrl
-  : "postgresql://postgres.quuazutreaitqoquzolg:James2002eze%23@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
 
+let connectionString = envDbUrl || "";
+if (!envDbUrl) {
+  console.error("DATABASE_URL environment variable is required.");
+  connectionString = "postgresql://dummy:dummy@localhost/dummy";
+} else if (!envDbUrl.startsWith("postgres://") && !envDbUrl.startsWith("postgresql://")) {
+  console.error("Invalid DATABASE_URL. It must be a PostgreSQL connection string starting with postgresql://, not a REST URL.");
+  connectionString = "postgresql://dummy:dummy@localhost/dummy";
+}
 const isLocalDb = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");
 
 // Vercel/Supabase may append ?sslmode=require which overrides pg's ssl property
@@ -35,6 +40,18 @@ const pool = new Pool({
   connectionString: cleanConnectionString,
   ssl: isLocalDb ? false : { rejectUnauthorized: false }
 });
+
+// Override pool.query to throw a descriptive error if the DB URL is misconfigured
+const originalQuery = pool.query.bind(pool);
+pool.query = async function(...args: any[]) {
+  if (!envDbUrl) {
+    throw new Error("Missing DATABASE_URL secret. Please add your Supabase PostgreSQL connection string in Settings.");
+  }
+  if (!envDbUrl.startsWith("postgres://") && !envDbUrl.startsWith("postgresql://")) {
+    throw new Error("Invalid DATABASE_URL secret. You pasted the Supabase URL (https://...). Please use the PostgreSQL Connection String (postgresql://...) instead.");
+  }
+  return originalQuery(...args);
+} as any;
 
 // Initialize database schema (graceful if DB not alive)
 async function initDb() {
