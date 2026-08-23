@@ -22,7 +22,10 @@ const PAGE_MODULES = [
   { id: 'metadata', label: 'System Metadata' },
   { id: 'stores', label: 'Stores' },
   { id: 'services', label: 'Services' },
-  { id: 'approvals', label: 'Pending Approvals' },
+    { id: 'approvals', label: 'Pending Approvals' },
+  { id: 'feed_approvals', label: 'Feed Approvals' },
+  { id: 'schools_mgmt', label: 'School Mgmt' },
+  { id: 'analytics', label: 'Analytics & Growth' },
 ];
 
 export default function Admins() {

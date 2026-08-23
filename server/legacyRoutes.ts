@@ -38,7 +38,7 @@ export function createLegacyRouter(pool: Pool) {
   router.get('/schools', handleReq(async (req, res) => {
     const { country_id } = req.query;
     let query = `
-      SELECT s.id, s.name, s.address, s.location, s.country_id, COALESCE(v.vendor_count, 0) AS vendor_count
+      SELECT s.id, s.name, s.address, s.location, s.country_id, s.free_delivery_fee, s.plus_delivery_fee, COALESCE(v.vendor_count, 0) AS vendor_count
       FROM schools s
       LEFT JOIN (SELECT school_id, COUNT(*)::int AS vendor_count FROM vendors GROUP BY school_id) v ON v.school_id = s.id
     `;

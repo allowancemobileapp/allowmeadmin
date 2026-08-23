@@ -503,18 +503,19 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
 app.get('/api/transactions', requireAdmin, async (req, res) => {
   try {
     const memRes = await pool.query(`
-      SELECT id::text, 'Membership' as type, (amount / 100) as amount, tier as status, user_id::text as user_email, created_at 
+      SELECT id::text, 'Membership' as type, (amount / 100) as amount, tier as status, payment_reference as reference, user_id::text as user_email, created_at 
       FROM membership_payments 
       ORDER BY created_at DESC LIMIT 200
     `);
     const gistRes = await pool.query(`
-      SELECT id::text, 'Gist' as type, amount_paid as amount, status, user_id::text as user_email, created_at 
+      SELECT id::text, 'Gist' as type, COALESCE(amount_paid, total_price, 0) as amount, status, payment_reference as reference, user_id::text as user_email, created_at 
       FROM gists
-      WHERE amount_paid IS NOT NULL AND amount_paid > 0
+      WHERE ((amount_paid IS NOT NULL AND amount_paid > 0) OR paid = true) 
+        AND (payment_reference IS NULL OR payment_reference NOT ILIKE 'coupon%')
       ORDER BY created_at DESC LIMIT 200
     `);
     const ticketRes = await pool.query(`
-      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, user_id::text as user_email, created_at 
+      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, payment_reference as reference, user_id::text as user_email, created_at 
       FROM ticket_purchases
       WHERE amount_paid IS NOT NULL AND amount_paid > 0
       ORDER BY created_at DESC LIMIT 200
@@ -526,6 +527,154 @@ app.get('/api/transactions', requireAdmin, async (req, res) => {
       .slice(0, 500);
 
     res.json(all);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+
+// -- Feed Submissions Approvals --
+app.get('/api/approvals/feed-submissions', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT f.*, p.email, p.username 
+      FROM feed_submissions f 
+      LEFT JOIN profiles p ON p.id = f.user_id 
+      WHERE f.status = 'pending' 
+      ORDER BY f.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/approvals/feed-submissions/:id', requireAdmin, async (req, res) => {
+  const { status } = req.body;
+  if (!['approved', 'rejected'].includes(status)) return res.status(400).json({error: "Invalid status"});
+  try {
+    const check = await pool.query('SELECT * FROM feed_submissions WHERE id = $1', [req.params.id]);
+    if (check.rows.length === 0) return res.status(404).json({error: "Submission not found"});
+    const sub = check.rows[0];
+    
+    if (sub.status !== 'pending') return res.status(400).json({error: "Already processed"});
+
+    if (status === 'approved') {
+      try {
+        await pool.query('BEGIN');
+        
+        // Add points column if not exists
+        await pool.query('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0');
+        await pool.query('UPDATE profiles SET points = points + $1 WHERE id = $2', [sub.points_potential || 0, sub.user_id]);
+
+        if (sub.submission_type === 'library') {
+          const d = sub.details;
+          await pool.query(
+            'INSERT INTO library_materials (course_id, material_type, title, file_url, price) VALUES ($1, $2, $3, $4, 0)',
+            [d.course_id, d.material_type || d.material_category, d.title || d.course_code, sub.evidence_url]
+          );
+        } else if (sub.submission_type === 'food-menu') {
+          const d = sub.details;
+          for (let item of d.items || []) {
+            const mRes = await pool.query(
+              'INSERT INTO meals (name, section_id, category_id, calorie_count) VALUES ($1, $2, $3, $4) RETURNING id',
+              [item.item_name, item.section_id || 1, item.category_id || 1, item.calorie_count || 0]
+            );
+            const mealId = mRes.rows[0].id;
+            await pool.query(
+              'INSERT INTO vendor_menus (vendor_id, meal_id, quantity_portion, price) VALUES ($1, $2, $3, $4)',
+              [d.vendor_id, mealId, item.portions_per_pack ? item.portions_per_pack.toString() : '1', item.price]
+            );
+          }
+        } else if (sub.submission_type === 'food-combo') {
+          const d = sub.details;
+          await pool.query(
+            'INSERT INTO options (vendor_id, combo_description, total_price, total_calories, items, signature) VALUES ($1, $2, $3, $4, $5, $6)',
+            [d.vendor_id, d.combo_name || d.items_description || 'Combo', d.total_price || 0, Math.round(d.total_calories || 0), JSON.stringify(d.items || []), d.items_description || '']
+          );
+        }
+
+        await pool.query('UPDATE feed_submissions SET status = $1, updated_at = NOW() WHERE id = $2', [status, req.params.id]);
+        await pool.query('COMMIT');
+      } catch (e) {
+        await pool.query('ROLLBACK');
+        console.error('Approval Error:', e);
+        return res.status(500).json({error: "Failed to process approval data: " + e.message});
+      }
+    } else {
+      await pool.query('UPDATE feed_submissions SET status = $1, updated_at = NOW() WHERE id = $2', [status, req.params.id]);
+    }
+
+    await logAdminAction((req as any).adminEmail, `${status === 'approved' ? 'Approved' : 'Rejected'} feed submission ${req.params.id}`, { status });
+    const finalCheck = await pool.query('SELECT * FROM feed_submissions WHERE id = $1', [req.params.id]);
+    res.json(finalCheck.rows[0]);
+  } catch (err: any) { 
+    console.error(err);
+    res.status(500).json({ error: err.message }); 
+  }
+});
+
+// -- Schools & Delivery Fees --
+app.put('/api/schools/:id/delivery-fees', requireAdmin, async (req, res) => {
+  const { free_delivery_fee, plus_delivery_fee } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE schools SET free_delivery_fee = $1, plus_delivery_fee = $2 WHERE id = $3 RETURNING *',
+      [free_delivery_fee, plus_delivery_fee, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({error: "School not found"});
+    await logAdminAction((req as any).adminEmail, `Updated delivery fees for school ${req.params.id}`, { free_delivery_fee, plus_delivery_fee });
+    res.json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// -- Delivery Agents --
+app.get('/api/delivery-agents', requireAdmin, async (req, res) => {
+  const { school_id } = req.query;
+  try {
+    let query = 'SELECT d.*, s.name as school_name FROM delivery_personnel d LEFT JOIN schools s ON s.id = d.school_id';
+    const params = [];
+    if (school_id) {
+      query += ' WHERE d.school_id = $1';
+      params.push(school_id);
+    }
+    query += ' ORDER BY d.name ASC';
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/delivery-agents', requireAdmin, async (req, res) => {
+  const { school_id, name, gender, whatsapp_number } = req.body;
+  try {
+    const pCheck = await pool.query("SELECT id FROM profiles WHERE username = $1 OR username = $2", [name, name.replace('@', '')]);
+    if (pCheck.rows.length === 0) return res.status(400).json({error: "Allowance Username not found. Delivery agents must be registered users."});
+    const result = await pool.query(
+      "INSERT INTO delivery_personnel (school_id, name, gender, whatsapp_number, whatsapp_url) VALUES ($1, $2, $3, $4, '') RETURNING *",
+      [school_id, name, gender, whatsapp_number]
+    );
+    await logAdminAction((req as any).adminEmail, `Created delivery agent ${name}`, { school_id });
+    res.json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/delivery-agents/:id', requireAdmin, async (req, res) => {
+  const { school_id, name, gender, whatsapp_number } = req.body;
+  try {
+    const pCheck = await pool.query("SELECT id FROM profiles WHERE username = $1 OR username = $2", [name, name.replace('@', '')]);
+    if (pCheck.rows.length === 0) return res.status(400).json({error: "Allowance Username not found. Delivery agents must be registered users."});
+    const result = await pool.query(
+      'UPDATE delivery_personnel SET school_id = $1, name = $2, gender = $3, whatsapp_number = $4 WHERE id = $5 RETURNING *',
+      [school_id, name, gender, whatsapp_number, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({error: "Agent not found"});
+    await logAdminAction((req as any).adminEmail, `Updated delivery agent ${name}`, { school_id });
+    res.json(result.rows[0]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/delivery-agents/:id', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM delivery_personnel WHERE id = $1 RETURNING *', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({error: "Agent not found"});
+    await logAdminAction((req as any).adminEmail, `Deleted delivery agent ${result.rows[0].name}`, { agent_id: req.params.id });
+    res.json({ success: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 

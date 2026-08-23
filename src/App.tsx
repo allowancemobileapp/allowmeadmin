@@ -8,7 +8,7 @@ import {
   FileText, 
   Ticket as TicketIcon,
   Tag,
-  Activity,
+  Activity, FileCheck, School,
   CreditCard,
   Bell,
   LogOut,
@@ -42,6 +42,8 @@ import Coupons from './pages/Coupons';
 import Gists from './pages/Gists';
 import Tickets from './pages/Tickets';
 import Transactions from './pages/Transactions';
+import FeedApprovals from './pages/FeedApprovals';
+import SchoolManagement from './pages/SchoolManagement';
 import Notifications from './pages/Notifications';
 import Dashboard from './pages/Dashboard';
 import Countries from './pages/Countries';
@@ -81,6 +83,8 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
     { to: '/tickets', label: 'Ticket Management', icon: TicketIcon, id: 'tickets' },
     { to: '/notifications', label: 'Notifications', icon: Bell, id: 'notifications' },
     { to: '/approvals', label: 'Pending Approvals', icon: Store, id: 'approvals' },
+    { to: '/approvals/feed', label: 'Feed Approvals', icon: FileCheck, id: 'feed_approvals' },
+    { to: '/schools-mgmt', label: 'School Mgmt', icon: School, id: 'schools_mgmt' },
     { to: '/metadata', label: 'System Metadata', icon: Package, id: 'metadata' },
     { to: '/analytics', label: 'Analytics & Growth', icon: LineChart, id: 'analytics' },
   ];
@@ -331,6 +335,9 @@ function AppRouter() {
             <Route path="/tickets" element={<Tickets />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/approvals" element={<Approvals />} />
+            <Route path="/approvals/feed" element={<FeedApprovals />} />
+            <Route path="/schools-mgmt" element={<SchoolManagement />} />
+            
             <Route path="/metadata" element={<Metadata />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="*" element={<Navigate to="/" replace />} />

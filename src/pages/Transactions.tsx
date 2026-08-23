@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -9,6 +11,8 @@ export default function Transactions() {
   const [generating, setGenerating] = useState<string | null>(null);
   const [generateMsg, setGenerateMsg] = useState('');
   const [activeTab, setActiveTab] = useState<string>('expenses');
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportTimeframe, setExportTimeframe] = useState('Current Month');
   const { get, post } = useApi();
 
   // Expense form state
@@ -79,6 +83,102 @@ export default function Transactions() {
     return 'membership';
   };
 
+  const filterByTimeframe = (dateString: string, timeframe: string) => {
+    if (timeframe === 'Forever') return true;
+    
+    const date = new Date(dateString);
+    const now = new Date();
+    
+    if (timeframe === 'Current Month') {
+      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+    }
+    if (timeframe === 'Current Year') {
+      return date.getFullYear() === now.getFullYear();
+    }
+    if (timeframe === 'Last 1 Year') {
+      const oneYearAgo = new Date();
+      oneYearAgo.setFullYear(now.getFullYear() - 1);
+      return date >= oneYearAgo;
+    }
+    if (timeframe === 'Last 5 Years') {
+      const fiveYearsAgo = new Date();
+      fiveYearsAgo.setFullYear(now.getFullYear() - 5);
+      return date >= fiveYearsAgo;
+    }
+    return true;
+  };
+
+  const handleGeneratePDF = () => {
+    const filteredExp = expenses.filter(exp => filterByTimeframe(exp.expense_date, exportTimeframe));
+    const filteredTx = transactions.filter(tx => filterByTimeframe(tx.created_at, exportTimeframe));
+
+    const totalRevenue = filteredTx.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+    const totalExpenses = filteredExp.reduce((sum, exp) => sum + parseFloat(exp.amount || 0), 0);
+    const netProfit = totalRevenue - totalExpenses;
+
+    const doc = new jsPDF();
+    
+    doc.setFontSize(20);
+    doc.text('ALLOWANCE SAAS LTD - P&L and Balance Sheet', 14, 22);
+    
+    doc.setFontSize(11);
+    doc.text(`Timeframe: ${exportTimeframe}`, 14, 30);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 36);
+
+    doc.setFontSize(14);
+    doc.text('Financial Summary', 14, 48);
+    autoTable(doc, {
+      startY: 52,
+      head: [['Metric', 'Amount (NGN)']],
+      body: [
+        ['Total Revenue', `+N${totalRevenue.toLocaleString(undefined, {minimumFractionDigits: 2})}`],
+        ['Total Expenses', `-N${totalExpenses.toLocaleString(undefined, {minimumFractionDigits: 2})}`],
+        ['Net Profit (Loss)', `${netProfit >= 0 ? '+' : '-'}N${Math.abs(netProfit).toLocaleString(undefined, {minimumFractionDigits: 2})}`]
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [79, 70, 229] }
+    });
+
+    const finalYSummary = (doc as any).lastAutoTable.finalY || 80;
+    doc.setFontSize(14);
+    doc.text('Expenses Breakdown', 14, finalYSummary + 14);
+    
+    const expenseData = filteredExp.map(exp => [
+      exp.title, 
+      exp.reason, 
+      new Date(exp.expense_date).toLocaleDateString(), 
+      `N${parseFloat(exp.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}`
+    ]);
+
+    autoTable(doc, {
+      startY: finalYSummary + 18,
+      head: [['Title', 'Category', 'Date', 'Amount']],
+      body: expenseData.length ? expenseData : [['No expenses', '', '', '']],
+      theme: 'striped'
+    });
+
+    const finalYExpenses = (doc as any).lastAutoTable.finalY || 120;
+    doc.text('Revenue Breakdown', 14, finalYExpenses + 14);
+
+    const revenueData = filteredTx.map(tx => [
+      tx.type.toUpperCase(),
+      tx.user_email || 'N/A',
+      tx.reference || 'N/A',
+      new Date(tx.created_at).toLocaleDateString(),
+      `N${parseFloat(tx.amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}`
+    ]);
+
+    autoTable(doc, {
+      startY: finalYExpenses + 18,
+      head: [['Type', 'User', 'Reference', 'Date', 'Amount']],
+      body: revenueData.length ? revenueData : [['No revenue', '', '', '', '']],
+      theme: 'striped'
+    });
+
+    doc.save(`AllowancePro_Financials_${exportTimeframe.replace(/ /g, '_')}.pdf`);
+    setShowExportModal(false);
+  };
+
   const filteredTransactions = transactions.filter(tx => getNormalizedType(tx.type) === activeTab);
 
   return (
@@ -97,11 +197,11 @@ export default function Transactions() {
             {generating === activeTab ? 'Exporting...' : `Export ${activeTab.toUpperCase()} Sheet`}
           </button>
           <button 
-            onClick={() => handleGenerate('general')}
+            onClick={() => setShowExportModal(true)}
             disabled={!!generating}
             className="px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50"
           >
-            {generating === 'general' ? 'Generating...' : 'General Export (P&L, Balance)'}
+            General Export (P&L, Balance)
           </button>
         </div>
       </div>
@@ -206,6 +306,7 @@ export default function Transactions() {
               <tr>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Type</th>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">User</th>
+                <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Reference</th>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Amount</th>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Status</th>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Date</th>
@@ -216,7 +317,8 @@ export default function Transactions() {
                 <tr key={tx.id} className="hover:bg-slate-50/50">
                   <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-bold uppercase tracking-wider text-xs">{tx.type}</td>
                   <td className="px-6 py-4 text-slate-600 dark:text-slate-400">{tx.user_email || '-'}</td>
-                  <td className="px-6 py-4 text-emerald-600 font-mono font-bold text-base">+₦{parseFloat(tx.amount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                  <td className="px-6 py-4 text-slate-500 font-mono text-xs max-w-[150px] truncate" title={tx.reference}>{tx.reference || '-'}</td>
+                  <td className="px-6 py-4 text-emerald-600 font-mono font-bold text-base">+₦{parseFloat(tx.amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                   <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${tx.status === 'successful' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700'}`}>
                       {tx.status}
@@ -228,6 +330,46 @@ export default function Transactions() {
             </tbody>
           </table>
           {filteredTransactions.length === 0 && <div className="p-6 text-center text-slate-400 font-medium text-sm">No transactions found for this type.</div>}
+        </div>
+      )}
+
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl p-6 w-full max-w-sm border border-slate-200 dark:border-slate-800">
+            <h3 className="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4">Export Financials</h3>
+            <p className="text-sm text-slate-500 mb-4">Select the timeframe for your P&L and Balance Sheet PDF export.</p>
+            
+            <div className="space-y-2 mb-6">
+              {['Current Month', 'Current Year', 'Last 1 Year', 'Last 5 Years', 'Forever'].map(tf => (
+                <label key={tf} className="flex items-center gap-3 p-3 border border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                  <input 
+                    type="radio" 
+                    name="timeframe" 
+                    value={tf} 
+                    checked={exportTimeframe === tf} 
+                    onChange={() => setExportTimeframe(tf)}
+                    className="text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                  />
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{tf}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowExportModal(false)}
+                className="flex-1 py-2 px-4 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleGeneratePDF}
+                className="flex-1 py-2 px-4 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 transition-colors shadow-sm"
+              >
+                Download PDF
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
