@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Build artefacts. server.js was committed by mistake and SHADOWED server.ts:
+# api/index.ts does `import app from "../server.js"`, which resolves to a real
+# server.js file if one exists, and only falls through to server.ts when it
+# does not. A stale bundle sat here since August, so every route added after
+# it was built -- finance, school management, feed approvals -- 404'd in
+# production while working perfectly on localhost.
+server.js
+server.js.map
+dist-server/
