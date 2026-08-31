@@ -593,32 +593,6 @@ app.put('/api/approvals/feed-submissions/:id', requireAdmin, async (req, res) =>
         await pool.query('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0');
         await pool.query('UPDATE profiles SET points = points + $1 WHERE id = $2', [sub.points_potential || 0, sub.user_id]);
 
-        if (sub.submission_type === 'library') {
-          const d = sub.details;
-          await pool.query(
-            'INSERT INTO library_materials (course_id, material_type, title, file_url, price) VALUES ($1, $2, $3, $4, 0)',
-            [d.course_id, d.material_type || d.material_category, d.title || d.course_code, sub.evidence_url]
-          );
-        } else if (sub.submission_type === 'food-menu') {
-          const d = sub.details;
-          for (let item of d.items || []) {
-            const mRes = await pool.query(
-              'INSERT INTO meals (name, section_id, category_id, calorie_count) VALUES ($1, $2, $3, $4) RETURNING id',
-              [item.item_name, item.section_id || 1, item.category_id || 1, item.calorie_count || 0]
-            );
-            const mealId = mRes.rows[0].id;
-            await pool.query(
-              'INSERT INTO vendor_menus (vendor_id, meal_id, quantity_portion, price) VALUES ($1, $2, $3, $4)',
-              [d.vendor_id, mealId, item.portions_per_pack ? item.portions_per_pack.toString() : '1', item.price]
-            );
-          }
-        } else if (sub.submission_type === 'food-combo') {
-          const d = sub.details;
-          await pool.query(
-            'INSERT INTO options (vendor_id, combo_description, total_price, total_calories, items, signature) VALUES ($1, $2, $3, $4, $5, $6)',
-            [d.vendor_id, d.combo_name || d.items_description || 'Combo', d.total_price || 0, Math.round(d.total_calories || 0), JSON.stringify(d.items || []), d.items_description || '']
-          );
-        }
 
         await pool.query('UPDATE feed_submissions SET status = $1, updated_at = NOW() WHERE id = $2', [status, req.params.id]);
         await pool.query('COMMIT');
