@@ -7,12 +7,17 @@ coverage/
 .env*
 !.env.example
 
-# Build artefacts. server.js was committed by mistake and SHADOWED server.ts:
-# api/index.ts does `import app from "../server.js"`, which resolves to a real
-# server.js file if one exists, and only falls through to server.ts when it
-# does not. A stale bundle sat here since August, so every route added after
-# it was built -- finance, school management, feed approvals -- 404'd in
-# production while working perfectly on localhost.
-server.js
+# server.js IS COMMITTED ON PURPOSE. Do not add it back to this file.
+#
+# package.json sets "type": "module", and api/index.ts does
+#   import app from "../server.js"
+# Node ESM does not resolve .js to .ts, so that import needs a real server.js
+# on disk. Deleting it takes the whole API down with
+# FUNCTION_INVOCATION_FAILED.
+#
+# It went stale once and cost months: every route added after it was last
+# built -- finance, school management, feed approvals -- 404'd in production
+# while working on localhost. `npm run build` and `vercel-build` now both
+# regenerate it, so it tracks server.ts automatically.
 server.js.map
 dist-server/
