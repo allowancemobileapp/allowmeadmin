@@ -17,6 +17,11 @@ import {
   GrossProfitTab, PayrollTab, MilestonesTab, StakeholderTab,
 } from './finance/tabs';
 import { useIdleLock, IdleLockScreen, ReauthGate } from './finance/SessionGuard';
+import { Explain } from './finance/Explain';
+import { PeopleTab } from './finance/PeopleTab';
+import { LiveSplitTab } from './finance/LiveSplit';
+import { SchoolsTab } from './finance/SchoolsTab';
+import { InvestorPicker } from './finance/Investors';
 
 /**
  * The company's money, in one place.
@@ -55,7 +60,7 @@ const STREAM_COLOURS = [
 ];
 
 export default function Finance() {
-  const { get, post, put } = useApi();
+  const { get, post, put, del } = useApi();
 
   const [tab, setTab] = useState('overview');
   const [period, setPeriod] = useState('month');
@@ -108,12 +113,15 @@ export default function Finance() {
 
   const TABS = [
     { id: 'overview',    label: 'Money in & out',  icon: Wallet },
+    { id: 'live',        label: 'Live split',      icon: TrendingUp },
     { id: 'grossprofit', label: 'Gross profit',    icon: ShieldCheck },
     { id: 'payroll',     label: 'Payroll',         icon: BadgeDollarSign },
     { id: 'captable',    label: 'Ownership',       icon: PieIcon },
     { id: 'milestones',  label: 'Milestones',      icon: Target },
     { id: 'round',       label: 'Round modelling', icon: Calculator },
     { id: 'mystake',     label: 'My stake',        icon: Users },
+    { id: 'schools',     label: 'Campuses',        icon: Building2 },
+    { id: 'people',      label: 'People',          icon: Users },
     { id: 'record',      label: 'Record',          icon: Plus },
     { id: 'reports',     label: 'Reports',         icon: Download },
     ...(role === 'founder'
@@ -123,7 +131,7 @@ export default function Finance() {
   const customIncomplete = period === 'custom' && (!custom.from || !custom.to);
   // Only these tabs are driven by the date filter. Showing it above a cap
   // table would imply ownership changes with the range, which it does not.
-  const periodDriven = ['overview', 'reports'].includes(tab);
+  const periodDriven = ['overview', 'live', 'schools', 'reports'].includes(tab);
 
   return (
     <div className="space-y-6">
@@ -134,6 +142,7 @@ export default function Finance() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">
             Company Finance
           </h1>
+          <div className="mt-2"><Explain tab={tab} /></div>
           <p className="text-sm text-slate-500 mt-1">
             ALLOWANCE SAAS LTD · RC 9615473
             {periodDriven && summary?.period &&
@@ -200,7 +209,12 @@ export default function Finance() {
         : (
           <>
             {tab === 'overview'    && <Overview summary={summary} series={series} />}
-            {tab === 'grossprofit' && <GrossProfitTab get={get} post={post} role={role} />}
+            {tab === 'live'        && <LiveSplitTab get={get} period={period} role={role} />}
+            {tab === 'schools'     && <SchoolsTab get={get} post={post} put={put}
+                                                  del={del} period={period} role={role} />}
+            {tab === 'people'      && <PeopleTab get={get} post={post} put={put}
+                                                 del={del} role={role} />}
+            {tab === 'grossprofit' && <GrossProfitTab get={get} post={post} put={put} role={role} />}
             {tab === 'payroll'     && (
               <ReauthGate>
                 <PayrollTab get={get} post={post} role={role} />
@@ -208,7 +222,8 @@ export default function Finance() {
             )}
             {tab === 'captable'    && <CapTableView data={capTable} />}
             {tab === 'milestones'  && <MilestonesTab get={get} post={post} put={put} role={role} />}
-            {tab === 'round'       && <RoundModelling data={capTable} post={post} />}
+            {tab === 'round'       && <RoundModelling data={capTable} get={get} post={post}
+                                                      put={put} del={del} role={role} />}
             {tab === 'mystake'     && <StakeholderTab get={get} />}
             {tab === 'record'      && <RecordTab post={post} get={get} onDone={load} />}
             {tab === 'reports'     && <Reports get={get} qs={qs()} summary={summary} />}
@@ -435,7 +450,7 @@ function CapTableView({ data }: any) {
 // Round modelling. Hypothetical -- no outside investment is planned.
 // --------------------------------------------------------------------------
 
-function RoundModelling({ data, post }: any) {
+function RoundModelling({ data, get, post, put, del, role }: any) {
   const [model, setModel] = useState<any>(null);
   const [modelling, setModelling] = useState(false);
   const [form, setForm] = useState({
@@ -443,14 +458,20 @@ function RoundModelling({ data, post }: any) {
     pool_pre_money: true, include_safes: SAFE_ENABLED,
   });
   const [err, setErr] = useState<string | null>(null);
+  // Total from the named participants, when there are any.
+  const [investorTotal, setInvestorTotal] = useState(0);
 
   if (!data?.holders?.length) return <Empty>Nobody is on the cap table yet.</Empty>;
+
+  // Named participants win over the single Raising box, so the two cannot
+  // silently disagree about how much money is arriving.
+  const raiseAmount = investorTotal > 0 ? investorTotal : Number(form.raise);
 
   const runModel = async () => {
     setErr(null); setModelling(true);
     try {
       setModel(await post('/api/finance/model-round', {
-        raise: Number(form.raise),
+        raise: raiseAmount,
         pre_money: Number(form.pre_money),
         pool_pct: Number(form.pool_pct),
         pool_pre_money: form.pool_pre_money,
@@ -466,6 +487,18 @@ function RoundModelling({ data, post }: any) {
         No outside investment is planned. This is here so a term sheet can be
         checked before it is signed.
       </Note>
+
+      <InvestorPicker get={get} post={post} put={put} del={del} role={role}
+                      onTotal={setInvestorTotal} />
+
+      {investorTotal > 0 && (
+        <Note tone="indigo">
+          Modelling a raise of{' '}
+          <strong>&#8358;{investorTotal.toLocaleString('en-NG')}</strong> from
+          the people above. The Raising box below is ignored while anyone is
+          listed.
+        </Note>
+      )}
 
       <Card className="p-5">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

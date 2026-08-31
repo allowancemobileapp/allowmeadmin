@@ -11,6 +11,7 @@ import { createUserRouter } from "./server/userRoutes.js";
 import { createFinanceRouter } from "./server/financeRoutes.js";
 import { createFinanceV2Router } from "./server/financeV2Routes.js";
 import { createPeopleRouter } from "./server/peopleRoutes.js";
+import { createLiveRouter } from "./server/liveRoutes.js";
 
 dotenv.config();
 
@@ -293,6 +294,8 @@ app.use('/api/finance', requireAdmin, createFinanceRouter(pool));
 app.use('/api/finance', requireAdmin, createFinanceV2Router(pool));
 // Staff and stakeholders: access, salary, contracts, rewards.
 app.use('/api/people', requireAdmin, createPeopleRouter(pool));
+// Live split, campus earnings, modelled investors.
+app.use('/api/live', requireAdmin, createLiveRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {

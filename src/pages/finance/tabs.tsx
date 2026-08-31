@@ -3,6 +3,7 @@ import {
   Card, Stat, Field, Empty, Note, BandPill, BasisFigure, Th, Td,
   fmtKobo, pct, shares, inputCls, btnCls, btnGhost,
 } from './ui';
+import { ExpenseTagging } from './ExpenseTagging';
 import {
   ShieldCheck, Lock, AlertTriangle, CheckCircle2, XCircle, Clock,
   ArrowRightLeft, FilePlus2, Wallet, Target, TrendingUp,
@@ -14,7 +15,7 @@ const monthKey = (d = new Date()) => d.toISOString().slice(0, 7);
 // Section 3 -- Monthly Gross Profit
 // ==========================================================================
 
-export function GrossProfitTab({ get, post, role }: any) {
+export function GrossProfitTab({ get, post, put, role }: any) {
   const [month, setMonth] = useState(monthKey());
   const [draft, setDraft] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
@@ -105,7 +106,15 @@ export function GrossProfitTab({ get, post, role }: any) {
                       {a.stream}
                       <span className="ml-2 text-slate-400">
                         {a.payments} payment{a.payments === 1 ? '' : 's'}
+                        {a.payments > 0 &&
+                          ` · avg ${fmtKobo(Math.round(a.collected / a.payments))}`}
                       </span>
+                      {a.thirdParty > 0 && (
+                        <span className="block text-amber-600 dark:text-amber-500 mt-0.5">
+                          {fmtKobo(a.thirdParty)} of this is the organiser's —
+                          the company keeps {fmtKobo(a.company)}
+                        </span>
+                      )}
                     </span>
                   </Td>
                   <Td right mono className="text-xs text-slate-500">
@@ -185,6 +194,8 @@ export function GrossProfitTab({ get, post, role }: any) {
           </div>
         </Card>
       )}
+
+      <ExpenseTagging month={month} get={get} put={put} onChange={load} />
 
       <Card className="overflow-hidden">
         <div className="p-5 border-b border-slate-200 dark:border-slate-800">

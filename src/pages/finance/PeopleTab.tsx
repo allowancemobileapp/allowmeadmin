@@ -103,8 +103,18 @@ export function PeopleTab({ get, post, put, del, role }: any) {
                         <p className="font-medium text-slate-800 dark:text-slate-200">
                           {p.full_name}
                         </p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {p.is_founder && <TagPill tone="indigo">Founder</TagPill>}
+                          {p.is_cofounder && !p.is_founder && <TagPill tone="indigo">Co-founder</TagPill>}
+                          {(p.tagged_director || p.is_director) && <TagPill tone="violet">Director</TagPill>}
+                          {p.shares > 0 && <TagPill tone="emerald">Shareholder</TagPill>}
+                          {p.is_staff && <TagPill tone="slate">Staff</TagPill>}
+                          {p.is_founding_team && <TagPill tone="amber">Founding team</TagPill>}
+                          {p.is_investor && <TagPill tone="cyan">Investor</TagPill>}
+                          {p.is_external && <TagPill tone="slate">External</TagPill>}
+                        </div>
                         <p className="text-xs text-slate-500">
-                          {p.role_title || 'No title'}
+                          {p.staff_role || p.role_title || 'No title'}
                           {p.employment_status !== 'active' && (
                             <span className="ml-2 text-amber-600 font-medium">
                               {p.employment_status.replace('_', ' ')}
@@ -217,11 +227,11 @@ function AddPerson({ post, onDone }: any) {
 // --------------------------------------------------------------------------
 
 function PersonDetail({ person: p, isFounder, get, post, put, del, onChange }: any) {
-  const [pane, setPane] = useState<'access' | 'salary' | 'contracts' | 'rewards'>(
-    isFounder ? 'access' : 'contracts');
+  const [pane, setPane] = useState<string>(isFounder ? 'tags' : 'contracts');
 
   const panes = isFounder
     ? [
+        { id: 'tags', label: 'Role & tags', icon: ShieldCheck },
         { id: 'access', label: 'Access', icon: KeyRound },
         { id: 'salary', label: 'Salary', icon: Wallet },
         { id: 'contracts', label: 'Contracts', icon: FileText },
@@ -242,10 +252,148 @@ function PersonDetail({ person: p, isFounder, get, post, put, del, onChange }: a
         ))}
       </div>
 
+      {pane === 'tags'      && <TagsPane p={p} put={put} onChange={onChange} />}
       {pane === 'access'    && <AccessPane p={p} post={post} del={del} onChange={onChange} />}
       {pane === 'salary'    && <SalaryPane p={p} put={put} onChange={onChange} />}
       {pane === 'contracts' && <ContractsPane p={p} get={get} isFounder={isFounder} onChange={onChange} />}
       {pane === 'rewards'   && <RewardsPane p={p} get={get} post={post} onChange={onChange} />}
+    </div>
+  );
+}
+
+
+function TagPill({ children, tone = 'slate' }: any) {
+  const tones: Record<string, string> = {
+    indigo:  'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400',
+    violet:  'bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-400',
+    emerald: 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400',
+    amber:   'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400',
+    cyan:    'bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-400',
+    slate:   'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400',
+  };
+  return (
+    <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded ' + tones[tone]}>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * What a person IS to the company.
+ *
+ * These are separate flags on purpose. An admin can be a stakeholder without
+ * being staff; a designer can be staff without owning a share; a director
+ * need be neither. Collapsing them into one "role" is exactly what left round
+ * modelling unable to tell an owner from an employee from an outsider.
+ */
+function TagsPane({ p, put, onChange }: any) {
+  const [f, setF] = useState<any>({
+    staff_role: p.staff_role || p.role_title || '',
+    role_title: p.role_title || '',
+    is_cofounder: !!p.is_cofounder,
+    is_director: !!(p.tagged_director ?? p.is_director),
+    is_founding_team: !!p.is_founding_team,
+    is_staff: !!p.is_staff,
+    is_investor: !!p.is_investor,
+    is_external: !!p.is_external,
+    employment_status: p.employment_status || 'active',
+    notes: p.notes || '',
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      await put('/api/people/' + p.id, f);
+      setMsg('Saved.');
+      onChange();
+    } catch (e: any) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const FLAGS = [
+    { k: 'is_cofounder',     label: 'Co-founder',
+      hint: 'Started the company with you.' },
+    { k: 'is_director',      label: 'Director',
+      hint: 'A director is the only person who can certify your own milestone shares.' },
+    { k: 'is_founding_team', label: 'Founding Team Member',
+      hint: 'Article 3: only these people may ever hold Class A shares.' },
+    { k: 'is_staff',         label: 'Staff',
+      hint: 'Works here. Separate from owning part of the company.' },
+    { k: 'is_investor',      label: 'Investor',
+      hint: 'Put money in rather than time.' },
+    { k: 'is_external',      label: 'External',
+      hint: 'An exco, a matron, a partner — not an employee.' },
+  ];
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <Note tone="slate">
+        A person can be several of these at once, and most of yours are. They
+        are separate switches because round modelling and the campus split need
+        to tell an owner from an employee from an outsider.
+      </Note>
+
+      {p.shares > 0 && (
+        <Note tone="emerald" title="Shareholder.">
+          {shares(p.shares)} shares on the register. That one is not a switch —
+          it comes from the share register itself and changes only when shares
+          actually move, on the Ownership tab.
+        </Note>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Field label="Job title" hint="What they are called.">
+          <input className={inputCls} value={f.role_title}
+                 onChange={(e) => setF({ ...f, role_title: e.target.value })} />
+        </Field>
+        <Field label="Staff role" hint="What they actually do day to day.">
+          <input className={inputCls} value={f.staff_role}
+                 placeholder="e.g. Engineering, Growth, Design"
+                 onChange={(e) => setF({ ...f, staff_role: e.target.value })} />
+        </Field>
+        <Field label="Employment status">
+          <select className={inputCls} value={f.employment_status}
+                  onChange={(e) => setF({ ...f, employment_status: e.target.value })}>
+            <option value="active">Active</option>
+            <option value="on_leave">On leave</option>
+            <option value="left">Left</option>
+            <option value="prospective">Prospective</option>
+          </select>
+        </Field>
+      </div>
+
+      <div className="space-y-2">
+        {FLAGS.map((x) => (
+          <label key={x.k}
+                 className={'flex items-start gap-3 p-3 rounded-lg border cursor-pointer ' +
+                   (f[x.k] ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40'
+                           : 'border-slate-200 dark:border-slate-700')}>
+            <input type="checkbox" className="mt-0.5" checked={f[x.k]}
+                   onChange={(e) => setF({ ...f, [x.k]: e.target.checked })} />
+            <span>
+              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                {x.label}
+              </span>
+              <span className="block text-xs text-slate-500 mt-0.5">{x.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      <Field label="Notes">
+        <textarea className={inputCls} rows={2} value={f.notes}
+                  onChange={(e) => setF({ ...f, notes: e.target.value })} />
+      </Field>
+
+      {err && <p className="text-sm text-rose-600">{err}</p>}
+      {msg && <p className="text-sm text-emerald-600">{msg}</p>}
+
+      <button onClick={save} disabled={busy} className={btnCls}>
+        {busy ? 'Saving…' : 'Save'}
+      </button>
     </div>
   );
 }

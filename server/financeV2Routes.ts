@@ -119,7 +119,12 @@ export function createFinanceV2Router(pool: Pool) {
       stream: r.stream,
       slug: r.slug,
       collected: Number(r.collected_kobo),
+      // The organiser's / vendor's share. On tickets the company keeps a flat
+      // N500 and the rest of the ticket price was never its money.
+      thirdParty: Number(r.third_party_kobo),
+      company: Number(r.company_kobo),
       payments: Number(r.payments),
+      feeBasis: r.fee_basis,
       source: 'automatic' as const,
     }));
 
@@ -147,7 +152,12 @@ export function createFinanceV2Router(pool: Pool) {
       // counted, because a company will do one or the other, and missing
       // either would overstate gross profit and overpay.
       gatewayFees: sumBy(manualStreams, 'gateway') + expenseBucket('payment_processing'),
-      sellerPayouts: sumBy(manualStreams, 'seller') + expenseBucket('seller_payouts'),
+      // Third-party share, counted the way clause 7.1(b) requires: the full
+      // amount collected is revenue, and what belongs to somebody else comes
+      // straight back off.
+      sellerPayouts: sumBy(autoStreams, 'thirdParty')
+                   + sumBy(manualStreams, 'seller')
+                   + expenseBucket('seller_payouts'),
       directInfrastructure: sumBy(manualStreams, 'direct') + expenseBucket('infrastructure'),
       refunds: expenseBucket('refunds'),
     };

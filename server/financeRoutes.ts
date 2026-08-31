@@ -465,6 +465,43 @@ export function createFinanceRouter(pool: Pool) {
     res.json(r.rows);
   }));
 
+  /**
+   * Re-tag an expense.
+   *
+   * Everything logged before 0085 defaulted to 'other', which is not
+   * deductible, so real costs sat outside Monthly Gross Profit and the
+   * company looked more profitable than it was. There was no way to fix one
+   * from the app -- now there is.
+   */
+  router.put('/expenses/:id', handleReq(async (req: any, res: any) => {
+    const { category, title, reason, amount, expense_date } = req.body;
+    const before = await pool.query(
+      'SELECT * FROM company_expenses WHERE id = $1', [req.params.id]);
+    if (!before.rows[0]) throw new Error('No such expense.');
+
+    const r = await pool.query(
+      `UPDATE company_expenses SET
+         category = COALESCE($1, category),
+         title = COALESCE($2, title),
+         reason = COALESCE($3, reason),
+         amount = COALESCE($4, amount),
+         expense_date = COALESCE($5, expense_date)
+       WHERE id = $6 RETURNING *`,
+      [category ?? null, title ?? null, reason ?? null,
+       amount ?? null, expense_date ?? null, req.params.id]);
+
+    // Re-tagging changes a certified month's inputs, so it is auditable.
+    try {
+      await pool.query(
+        `INSERT INTO finance_audit (actor, action, entity, entity_id, before, after)
+         VALUES ($1,'expense.retag','company_expenses',$2,$3,$4)`,
+        [req.adminEmail || 'unknown', String(req.params.id),
+         JSON.stringify(before.rows[0]), JSON.stringify(r.rows[0])]);
+    } catch (e) { /* audit table may not exist yet */ }
+
+    res.json(r.rows[0]);
+  }));
+
   router.post('/expenses', handleReq(async (req: any, res: any) => {
     const { title, reason, category, amount, expense_date, vendor } = req.body;
     if (!title || !amount) {

@@ -108,15 +108,20 @@ export function createPeopleRouter(pool: Pool) {
   }));
 
   router.post('/', founderOnly(async (req: any, res: any) => {
-    const { full_name, email, role_title, phone, is_staff, is_founding_team } = req.body;
+    const { full_name, email, role_title, phone, is_staff, is_founding_team,
+            is_cofounder, is_director, staff_role, is_investor, is_external,
+            notes } = req.body;
     if (!full_name?.trim()) throw new Error('A full name is required.');
 
     const r = await pool.query(
       `INSERT INTO shareholders
-         (full_name, email, role_title, phone, is_staff, is_founding_team)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+         (full_name, email, role_title, phone, is_staff, is_founding_team,
+          is_cofounder, is_director, staff_role, is_investor, is_external, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [full_name.trim(), email || null, role_title || null, phone || null,
-       is_staff !== false, !!is_founding_team]);
+       is_staff !== false, !!is_founding_team, !!is_cofounder, !!is_director,
+       staff_role || role_title || null, !!is_investor, !!is_external,
+       notes || null]);
 
     await audit(req, 'person.add', 'shareholders', r.rows[0].id, null, r.rows[0]);
     res.status(201).json(r.rows[0]);
@@ -124,7 +129,8 @@ export function createPeopleRouter(pool: Pool) {
 
   router.put('/:id', founderOnly(async (req: any, res: any) => {
     const { full_name, email, role_title, phone, employment_status, is_staff,
-            is_founding_team } = req.body;
+            is_founding_team, is_cofounder, is_director, staff_role,
+            is_investor, is_external, notes } = req.body;
     const before = await pool.query('SELECT * FROM shareholders WHERE id = $1',
                                     [req.params.id]);
     const r = await pool.query(
@@ -135,10 +141,18 @@ export function createPeopleRouter(pool: Pool) {
          phone = COALESCE($4, phone),
          employment_status = COALESCE($5, employment_status),
          is_staff = COALESCE($6, is_staff),
-         is_founding_team = COALESCE($7, is_founding_team)
-       WHERE id = $8 RETURNING *`,
+         is_founding_team = COALESCE($7, is_founding_team),
+         is_cofounder = COALESCE($8, is_cofounder),
+         is_director = COALESCE($9, is_director),
+         staff_role = COALESCE($10, staff_role),
+         is_investor = COALESCE($11, is_investor),
+         is_external = COALESCE($12, is_external),
+         notes = COALESCE($13, notes)
+       WHERE id = $14 RETURNING *`,
       [full_name ?? null, email ?? null, role_title ?? null, phone ?? null,
        employment_status ?? null, is_staff ?? null, is_founding_team ?? null,
+       is_cofounder ?? null, is_director ?? null, staff_role ?? null,
+       is_investor ?? null, is_external ?? null, notes ?? null,
        req.params.id]);
     if (!r.rows[0]) throw new Error('No such person.');
     await audit(req, 'person.update', 'shareholders', req.params.id,

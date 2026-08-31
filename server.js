@@ -1040,6 +1040,45 @@ function createFinanceRouter(pool2) {
       ORDER BY expense_date DESC`, [from, to]);
     res.json(r.rows);
   }));
+  router.put("/expenses/:id", handleReq(async (req, res) => {
+    const { category, title, reason, amount, expense_date } = req.body;
+    const before = await pool2.query(
+      "SELECT * FROM company_expenses WHERE id = $1",
+      [req.params.id]
+    );
+    if (!before.rows[0]) throw new Error("No such expense.");
+    const r = await pool2.query(
+      `UPDATE company_expenses SET
+         category = COALESCE($1, category),
+         title = COALESCE($2, title),
+         reason = COALESCE($3, reason),
+         amount = COALESCE($4, amount),
+         expense_date = COALESCE($5, expense_date)
+       WHERE id = $6 RETURNING *`,
+      [
+        category ?? null,
+        title ?? null,
+        reason ?? null,
+        amount ?? null,
+        expense_date ?? null,
+        req.params.id
+      ]
+    );
+    try {
+      await pool2.query(
+        `INSERT INTO finance_audit (actor, action, entity, entity_id, before, after)
+         VALUES ($1,'expense.retag','company_expenses',$2,$3,$4)`,
+        [
+          req.adminEmail || "unknown",
+          String(req.params.id),
+          JSON.stringify(before.rows[0]),
+          JSON.stringify(r.rows[0])
+        ]
+      );
+    } catch (e) {
+    }
+    res.json(r.rows[0]);
+  }));
   router.post("/expenses", handleReq(async (req, res) => {
     const { title, reason, category, amount, expense_date, vendor } = req.body;
     if (!title || !amount) {
@@ -1857,7 +1896,12 @@ function createFinanceV2Router(pool2) {
       stream: r.stream,
       slug: r.slug,
       collected: Number(r.collected_kobo),
+      // The organiser's / vendor's share. On tickets the company keeps a flat
+      // N500 and the rest of the ticket price was never its money.
+      thirdParty: Number(r.third_party_kobo),
+      company: Number(r.company_kobo),
       payments: Number(r.payments),
+      feeBasis: r.fee_basis,
       source: "automatic"
     }));
     const manualStreams = rev.rows.map((r) => ({
@@ -1877,7 +1921,10 @@ function createFinanceV2Router(pool2) {
       // counted, because a company will do one or the other, and missing
       // either would overstate gross profit and overpay.
       gatewayFees: sumBy(manualStreams, "gateway") + expenseBucket("payment_processing"),
-      sellerPayouts: sumBy(manualStreams, "seller") + expenseBucket("seller_payouts"),
+      // Third-party share, counted the way clause 7.1(b) requires: the full
+      // amount collected is revenue, and what belongs to somebody else comes
+      // straight back off.
+      sellerPayouts: sumBy(autoStreams, "thirdParty") + sumBy(manualStreams, "seller") + expenseBucket("seller_payouts"),
       directInfrastructure: sumBy(manualStreams, "direct") + expenseBucket("infrastructure"),
       refunds: expenseBucket("refunds")
     };
@@ -2656,6 +2703,831 @@ function createFinanceV2Router(pool2) {
   return router;
 }
 
+// server/peopleRoutes.ts
+import { Router as Router5 } from "express";
+import multer2 from "multer";
+var upload2 = multer2({
+  storage: multer2.memoryStorage(),
+  // A contract is a document, not a video. 15MB is generous and stops a
+  // mis-drop filling the bucket.
+  limits: { fileSize: 15 * 1024 * 1024 }
+});
+function createPeopleRouter(pool2) {
+  const router = Router5();
+  const handle = (fn) => async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (e) {
+      console.error("[people]", e);
+      res.status(400).json({ error: e.message });
+    }
+  };
+  const audit = async (req, action, entity, id, before, after) => {
+    try {
+      await pool2.query(
+        `INSERT INTO finance_audit (actor, action, entity, entity_id, before, after)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          req.adminEmail || "unknown",
+          action,
+          entity,
+          id,
+          before ? JSON.stringify(before) : null,
+          after ? JSON.stringify(after) : null
+        ]
+      );
+    } catch (e) {
+      console.error("audit write failed", e);
+    }
+  };
+  const roleOf = async (email) => {
+    const r = await pool2.query(
+      `SELECT role FROM finance_users WHERE lower(email) = lower($1) AND active`,
+      [email || ""]
+    );
+    return r.rows[0]?.role || "none";
+  };
+  const founderOnly = (fn) => handle(async (req, res) => {
+    if (await roleOf(req.adminEmail) !== "founder") {
+      return res.status(403).json({
+        error: "Only the founder can change people, pay or contracts."
+      });
+    }
+    await fn(req, res);
+  });
+  const storage2 = async () => {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) {
+      throw new Error(
+        "Contract storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your Vercel environment variables."
+      );
+    }
+    const { createClient } = await import("@supabase/supabase-js");
+    return createClient(url, key).storage.from("staff-contracts");
+  };
+  router.get("/", handle(async (req, res) => {
+    const role = await roleOf(req.adminEmail);
+    const r = await pool2.query("SELECT * FROM people");
+    const rows = r.rows.map((p) => ({
+      ...p,
+      shares: Number(p.shares || 0),
+      full_salary: p.full_salary === null ? null : Number(p.full_salary),
+      deferred_balance: Number(p.deferred_balance || 0),
+      rewards_total: Number(p.rewards_total || 0),
+      contract_count: Number(p.contract_count || 0)
+    }));
+    if (role !== "founder") {
+      const me = rows.find(
+        (p) => (p.login_email || "").toLowerCase() === (req.adminEmail || "").toLowerCase()
+      );
+      return res.json(rows.map((p) => p.id === me?.id ? p : {
+        id: p.id,
+        full_name: p.full_name,
+        role_title: p.role_title,
+        is_founder: p.is_founder,
+        is_staff: p.is_staff,
+        employment_status: p.employment_status,
+        shares: p.shares,
+        access_role: p.access_role,
+        full_salary: null,
+        deferred_balance: null,
+        rewards_total: null,
+        contract_count: 0,
+        restricted: true
+      }));
+    }
+    res.json(rows);
+  }));
+  router.post("/", founderOnly(async (req, res) => {
+    const {
+      full_name,
+      email,
+      role_title,
+      phone,
+      is_staff,
+      is_founding_team,
+      is_cofounder,
+      is_director,
+      staff_role,
+      is_investor,
+      is_external,
+      notes
+    } = req.body;
+    if (!full_name?.trim()) throw new Error("A full name is required.");
+    const r = await pool2.query(
+      `INSERT INTO shareholders
+         (full_name, email, role_title, phone, is_staff, is_founding_team,
+          is_cofounder, is_director, staff_role, is_investor, is_external, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        full_name.trim(),
+        email || null,
+        role_title || null,
+        phone || null,
+        is_staff !== false,
+        !!is_founding_team,
+        !!is_cofounder,
+        !!is_director,
+        staff_role || role_title || null,
+        !!is_investor,
+        !!is_external,
+        notes || null
+      ]
+    );
+    await audit(req, "person.add", "shareholders", r.rows[0].id, null, r.rows[0]);
+    res.status(201).json(r.rows[0]);
+  }));
+  router.put("/:id", founderOnly(async (req, res) => {
+    const {
+      full_name,
+      email,
+      role_title,
+      phone,
+      employment_status,
+      is_staff,
+      is_founding_team,
+      is_cofounder,
+      is_director,
+      staff_role,
+      is_investor,
+      is_external,
+      notes
+    } = req.body;
+    const before = await pool2.query(
+      "SELECT * FROM shareholders WHERE id = $1",
+      [req.params.id]
+    );
+    const r = await pool2.query(
+      `UPDATE shareholders SET
+         full_name = COALESCE($1, full_name),
+         email = COALESCE($2, email),
+         role_title = COALESCE($3, role_title),
+         phone = COALESCE($4, phone),
+         employment_status = COALESCE($5, employment_status),
+         is_staff = COALESCE($6, is_staff),
+         is_founding_team = COALESCE($7, is_founding_team),
+         is_cofounder = COALESCE($8, is_cofounder),
+         is_director = COALESCE($9, is_director),
+         staff_role = COALESCE($10, staff_role),
+         is_investor = COALESCE($11, is_investor),
+         is_external = COALESCE($12, is_external),
+         notes = COALESCE($13, notes)
+       WHERE id = $14 RETURNING *`,
+      [
+        full_name ?? null,
+        email ?? null,
+        role_title ?? null,
+        phone ?? null,
+        employment_status ?? null,
+        is_staff ?? null,
+        is_founding_team ?? null,
+        is_cofounder ?? null,
+        is_director ?? null,
+        staff_role ?? null,
+        is_investor ?? null,
+        is_external ?? null,
+        notes ?? null,
+        req.params.id
+      ]
+    );
+    if (!r.rows[0]) throw new Error("No such person.");
+    await audit(
+      req,
+      "person.update",
+      "shareholders",
+      req.params.id,
+      before.rows[0],
+      r.rows[0]
+    );
+    res.json(r.rows[0]);
+  }));
+  router.post("/:id/access", founderOnly(async (req, res) => {
+    const { email, role, is_director, active } = req.body;
+    if (!email?.trim()) throw new Error("An email is required to give access.");
+    const valid = ["founder", "director", "stakeholder"];
+    if (role && !valid.includes(role)) {
+      throw new Error(`Role must be one of: ${valid.join(", ")}.`);
+    }
+    const before = await pool2.query(
+      "SELECT * FROM finance_users WHERE shareholder_id = $1",
+      [req.params.id]
+    );
+    const r = await pool2.query(
+      `INSERT INTO finance_users (email, shareholder_id, role, is_director, active)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (email) DO UPDATE SET
+         shareholder_id = EXCLUDED.shareholder_id,
+         role = EXCLUDED.role,
+         is_director = EXCLUDED.is_director,
+         active = EXCLUDED.active
+       RETURNING *`,
+      [
+        email.trim().toLowerCase(),
+        req.params.id,
+        role || "stakeholder",
+        !!is_director,
+        active !== false
+      ]
+    );
+    await audit(
+      req,
+      "access.grant",
+      "finance_users",
+      r.rows[0].id,
+      before.rows[0] || null,
+      r.rows[0]
+    );
+    res.status(201).json(r.rows[0]);
+  }));
+  router.delete("/:id/access", founderOnly(async (req, res) => {
+    const before = await pool2.query(
+      "SELECT * FROM finance_users WHERE shareholder_id = $1",
+      [req.params.id]
+    );
+    await pool2.query(
+      "UPDATE finance_users SET active = false WHERE shareholder_id = $1",
+      [req.params.id]
+    );
+    await audit(
+      req,
+      "access.revoke",
+      "finance_users",
+      before.rows[0]?.id || null,
+      before.rows[0] || null,
+      null
+    );
+    res.json({ ok: true });
+  }));
+  router.put("/:id/salary", founderOnly(async (req, res) => {
+    const { scale, monthly_salary, resolution_ref } = req.body;
+    const kobo = Math.round(Number(monthly_salary || 0) * 100);
+    if (kobo < 0) throw new Error("A salary cannot be negative.");
+    const before = await pool2.query(
+      "SELECT * FROM pay_scales WHERE shareholder_id = $1",
+      [req.params.id]
+    );
+    const banded = ["officer", "founder"];
+    const wasBanded = banded.includes(before.rows[0]?.scale);
+    const willBeBanded = banded.includes(scale);
+    if ((wasBanded || willBeBanded) && !String(resolution_ref || "").trim()) {
+      throw new Error(
+        "Officer and founder salaries are set by contract. Record the shareholder resolution reference that authorises this change."
+      );
+    }
+    const cap = scale === "flat" ? 0 : scale === "founder" ? 15e6 : 1e7;
+    const inst = scale === "flat" ? 0 : scale === "founder" ? 15e5 : 1e6;
+    const r = await pool2.query(
+      `INSERT INTO pay_scales
+         (shareholder_id, scale, full_salary, deferred_cap, min_instalment,
+          resolution_ref, active)
+       VALUES ($1,$2,$3,$4,$5,$6,true)
+       ON CONFLICT (shareholder_id) DO UPDATE SET
+         scale = EXCLUDED.scale,
+         full_salary = EXCLUDED.full_salary,
+         deferred_cap = EXCLUDED.deferred_cap,
+         min_instalment = EXCLUDED.min_instalment,
+         resolution_ref = EXCLUDED.resolution_ref,
+         updated_at = now()
+       RETURNING *`,
+      [
+        req.params.id,
+        scale || "flat",
+        kobo,
+        cap,
+        inst,
+        resolution_ref || null
+      ]
+    );
+    await audit(
+      req,
+      "salary.set",
+      "pay_scales",
+      req.params.id,
+      before.rows[0] || null,
+      r.rows[0]
+    );
+    res.json(r.rows[0]);
+  }));
+  router.get("/:id/rewards", handle(async (req, res) => {
+    const role = await roleOf(req.adminEmail);
+    const owner = await pool2.query(
+      `SELECT 1 FROM finance_users WHERE shareholder_id = $1
+         AND lower(email) = lower($2) AND active`,
+      [req.params.id, req.adminEmail || ""]
+    );
+    if (role !== "founder" && owner.rows.length === 0) {
+      return res.status(403).json({ error: "You can only see your own rewards." });
+    }
+    const r = await pool2.query(
+      `SELECT r.*, sc.name AS class_name FROM staff_rewards r
+       LEFT JOIN share_classes sc ON sc.id = r.share_class_id
+       WHERE r.person_id = $1 ORDER BY r.awarded_on DESC`,
+      [req.params.id]
+    );
+    res.json(r.rows.map((x) => ({
+      ...x,
+      amount: x.amount === null ? null : Number(x.amount),
+      shares: x.shares === null ? null : Number(x.shares)
+    })));
+  }));
+  router.post("/:id/rewards", founderOnly(async (req, res) => {
+    const { kind, amount, shares, share_class_id, reason, awarded_on } = req.body;
+    if (!reason?.trim()) throw new Error("Say what the reward is for.");
+    const kobo = amount ? Math.round(Number(amount) * 100) : null;
+    const shareCount = shares ? Math.floor(Number(shares)) : null;
+    if (!kobo && !shareCount) throw new Error("Enter an amount or a number of shares.");
+    const client = await pool2.connect();
+    try {
+      await client.query("BEGIN");
+      const r = await client.query(
+        `INSERT INTO staff_rewards
+           (person_id, kind, amount, shares, share_class_id, reason,
+            awarded_on, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [
+          req.params.id,
+          kind || "bonus",
+          kobo,
+          shareCount,
+          share_class_id || null,
+          reason.trim(),
+          awarded_on || /* @__PURE__ */ new Date(),
+          req.adminEmail
+        ]
+      );
+      if (shareCount) {
+        if (!share_class_id) throw new Error("Choose a share class for a share award.");
+        const cls = await client.query(
+          "SELECT founder_only, name FROM share_classes WHERE id = $1",
+          [share_class_id]
+        );
+        const person = await client.query(
+          "SELECT is_founder, full_name FROM shareholders WHERE id = $1",
+          [req.params.id]
+        );
+        if (cls.rows[0]?.founder_only && !person.rows[0]?.is_founder) {
+          throw new Error(
+            `${cls.rows[0].name} cannot be issued to ${person.rows[0]?.full_name}. Under Article 3 it only reaches a Founding Team Member by transfer from the founder \u2014 record it on the Ownership tab.`
+          );
+        }
+        await client.query(
+          `INSERT INTO share_transactions
+             (shareholder_id, class_id, shares, kind, price_per_share,
+              txn_date, note, created_by)
+           VALUES ($1,$2,$3,'issue',0,$4,$5,$6)`,
+          [
+            req.params.id,
+            share_class_id,
+            shareCount,
+            awarded_on || /* @__PURE__ */ new Date(),
+            `Reward: ${reason.trim()}`,
+            req.adminEmail
+          ]
+        );
+      }
+      await client.query("COMMIT");
+      await audit(req, "reward.add", "staff_rewards", r.rows[0].id, null, r.rows[0]);
+      res.status(201).json(r.rows[0]);
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }));
+  router.post("/rewards/:rewardId/paid", founderOnly(async (req, res) => {
+    const r = await pool2.query(
+      `UPDATE staff_rewards SET paid_on = COALESCE($1, current_date)
+       WHERE id = $2 RETURNING *`,
+      [req.body.paid_on || null, req.params.rewardId]
+    );
+    if (!r.rows[0]) throw new Error("No such reward.");
+    await audit(
+      req,
+      "reward.paid",
+      "staff_rewards",
+      req.params.rewardId,
+      null,
+      r.rows[0]
+    );
+    res.json(r.rows[0]);
+  }));
+  const canSeeContracts = async (req, personId) => {
+    if (await roleOf(req.adminEmail) === "founder") return true;
+    const own = await pool2.query(
+      `SELECT 1 FROM finance_users WHERE shareholder_id = $1
+         AND lower(email) = lower($2) AND active`,
+      [personId, req.adminEmail || ""]
+    );
+    return own.rows.length > 0;
+  };
+  router.get("/:id/contracts", handle(async (req, res) => {
+    if (!await canSeeContracts(req, req.params.id)) {
+      return res.status(403).json({ error: "You can only see your own contract." });
+    }
+    const r = await pool2.query(
+      `SELECT id, title, kind, file_name, mime_type, size_bytes, signed_on,
+              uploaded_by, uploaded_at, superseded_by
+       FROM staff_contracts WHERE person_id = $1
+       ORDER BY uploaded_at DESC`,
+      [req.params.id]
+    );
+    res.json(r.rows.map((c) => ({ ...c, size_bytes: Number(c.size_bytes || 0) })));
+  }));
+  router.post(
+    "/:id/contracts",
+    (req, res, next) => {
+      upload2.single("file")(req, res, (err) => {
+        if (err) return res.status(400).json({ error: "Upload failed: " + err.message });
+        next();
+      });
+    },
+    handle(async (req, res) => {
+      if (await roleOf(req.adminEmail) !== "founder") {
+        return res.status(403).json({ error: "Only the founder can upload contracts." });
+      }
+      if (!req.file) throw new Error("No file was attached.");
+      const bucket = await storage2();
+      const safe = req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path2 = `${req.params.id}/${Date.now()}_${safe}`;
+      const { error } = await bucket.upload(path2, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false
+      });
+      if (error) throw new Error("Could not store the file: " + error.message);
+      const r = await pool2.query(
+        `INSERT INTO staff_contracts
+           (person_id, title, storage_path, file_name, mime_type, size_bytes,
+            kind, signed_on, uploaded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, title, kind,
+                  file_name, uploaded_at`,
+        [
+          req.params.id,
+          req.body.title || req.file.originalname,
+          path2,
+          req.file.originalname,
+          req.file.mimetype,
+          req.file.size,
+          req.body.kind || "employment",
+          req.body.signed_on || null,
+          req.adminEmail
+        ]
+      );
+      await audit(
+        req,
+        "contract.upload",
+        "staff_contracts",
+        r.rows[0].id,
+        null,
+        { person: req.params.id, file: req.file.originalname }
+      );
+      res.status(201).json(r.rows[0]);
+    })
+  );
+  router.get("/:id/contracts/:contractId/link", handle(async (req, res) => {
+    if (!await canSeeContracts(req, req.params.id)) {
+      return res.status(403).json({ error: "You can only open your own contract." });
+    }
+    const c = await pool2.query(
+      "SELECT storage_path, file_name FROM staff_contracts WHERE id = $1 AND person_id = $2",
+      [req.params.contractId, req.params.id]
+    );
+    if (!c.rows[0]) throw new Error("No such contract.");
+    const bucket = await storage2();
+    const { data, error } = await bucket.createSignedUrl(c.rows[0].storage_path, 300);
+    if (error) throw new Error("Could not create a link: " + error.message);
+    await audit(
+      req,
+      "contract.view",
+      "staff_contracts",
+      req.params.contractId,
+      null,
+      { person: req.params.id }
+    );
+    res.json({ url: data.signedUrl, file_name: c.rows[0].file_name, expires_in: 300 });
+  }));
+  router.get("/me/summary", handle(async (req, res) => {
+    const r = await pool2.query(
+      `SELECT * FROM people WHERE lower(login_email) = lower($1)`,
+      [req.adminEmail || ""]
+    );
+    if (!r.rows[0]) return res.json({ linked: false });
+    const p = r.rows[0];
+    res.json({
+      linked: true,
+      ...p,
+      shares: Number(p.shares || 0),
+      full_salary: p.full_salary === null ? null : Number(p.full_salary),
+      deferred_balance: Number(p.deferred_balance || 0),
+      rewards_total: Number(p.rewards_total || 0)
+    });
+  }));
+  return router;
+}
+
+// server/liveRoutes.ts
+import { Router as Router6 } from "express";
+function createLiveRouter(pool2) {
+  const router = Router6();
+  const handle = (fn) => async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (e) {
+      console.error("[live]", e);
+      res.status(400).json({ error: e.message });
+    }
+  };
+  const roleOf = async (email) => {
+    const r = await pool2.query(
+      `SELECT role FROM finance_users WHERE lower(email) = lower($1) AND active`,
+      [email || ""]
+    );
+    return r.rows[0]?.role || "none";
+  };
+  const founderOnly = (fn) => handle(async (req, res) => {
+    if (await roleOf(req.adminEmail) !== "founder") {
+      return res.status(403).json({ error: "Only the founder can change this." });
+    }
+    await fn(req, res);
+  });
+  const range = (q) => {
+    const today = /* @__PURE__ */ new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const p = String(q.period || "month");
+    if (p === "custom") {
+      return {
+        from: String(q.from || "1970-01-01"),
+        to: String(q.to || iso(today)),
+        label: `${q.from} to ${q.to}`
+      };
+    }
+    const start = new Date(today);
+    let label = "This month";
+    if (p === "today") {
+      label = "Today";
+    } else if (p === "week") {
+      start.setDate(today.getDate() - 6);
+      label = "Last 7 days";
+    } else if (p === "month") {
+      start.setDate(1);
+      label = "This month";
+    } else if (p === "quarter") {
+      start.setMonth(Math.floor(today.getMonth() / 3) * 3, 1);
+      label = "This quarter";
+    } else if (p === "year") {
+      start.setMonth(0, 1);
+      label = "This year";
+    } else if (p === "all") {
+      return { from: "1970-01-01", to: iso(today), label: "All time" };
+    }
+    return { from: iso(start), to: iso(today), label };
+  };
+  router.get("/split", handle(async (req, res) => {
+    const { from, to, label } = range(req.query);
+    const role = await roleOf(req.adminEmail);
+    const client = await pool2.connect();
+    try {
+      const holders = await client.query(
+        "SELECT * FROM stakeholder_earnings($1::date, $2::date)",
+        [from, to]
+      );
+      const totals = await client.query(
+        `
+        SELECT
+          COALESCE((SELECT SUM(amount) FROM company_income
+                     WHERE received_at::date BETWEEN $1 AND $2), 0) AS income,
+          COALESCE((SELECT COUNT(*) FROM company_income
+                     WHERE received_at::date BETWEEN $1 AND $2), 0) AS payments,
+          COALESCE((SELECT SUM(amount) FROM company_expenses
+                     WHERE expense_date::date BETWEEN $1 AND $2), 0) AS spend`,
+        [from, to]
+      );
+      const streams = await client.query(`
+        SELECT stream, COALESCE(SUM(amount),0) AS total, COUNT(*) AS payments
+        FROM company_income WHERE received_at::date BETWEEN $1 AND $2
+        GROUP BY stream ORDER BY total DESC`, [from, to]);
+      const campus = await client.query(`
+        SELECT COALESCE(SUM(se.company_share * ss.percent / 100.0), 0) AS owed
+        FROM school_stakeholders ss
+        JOIN school_earnings($1::date, $2::date) se ON se.school_id = ss.school_id
+        WHERE ss.active
+          AND ss.starts_on <= $2::date
+          AND (ss.ends_on IS NULL OR ss.ends_on >= $1::date)`, [from, to]);
+      const t = totals.rows[0];
+      const income = Number(t.income || 0);
+      const spend = Number(t.spend || 0);
+      const owed = Number(campus.rows[0]?.owed || 0);
+      res.json({
+        period: { from, to, label },
+        totals: {
+          income,
+          spend,
+          retained: income - spend,
+          payments: Number(t.payments || 0),
+          campus_liability: owed,
+          per_naira_note: "Each holder receives this fraction of every naira."
+        },
+        streams: streams.rows.map((s) => ({
+          stream: s.stream,
+          total: Number(s.total),
+          payments: Number(s.payments)
+        })),
+        holders: holders.rows.map((h) => ({
+          holder_id: h.holder_id,
+          full_name: h.full_name,
+          role_title: h.role_title,
+          shares: Number(h.shares),
+          ownership_pct: Number(h.ownership_pct),
+          share_of_income: Number(h.share_of_income),
+          share_of_profit: Number(h.share_of_profit),
+          // Their slice of the next naira through the door.
+          per_naira: Number(h.ownership_pct) / 100
+        })),
+        // Everyone may see the split -- that is the point of it. Only the
+        // founder sees what the company spent to get there.
+        viewer_role: role
+      });
+    } finally {
+      client.release();
+    }
+  }));
+  router.get("/schools", handle(async (req, res) => {
+    const { from, to, label } = range(req.query);
+    const client = await pool2.connect();
+    try {
+      const rows = await client.query(
+        "SELECT * FROM school_earnings($1::date, $2::date)",
+        [from, to]
+      );
+      const partners = await client.query(`
+        SELECT ss.*, sh.full_name AS person_name, s.name AS school_name
+        FROM school_stakeholders ss
+        LEFT JOIN shareholders sh ON sh.id = ss.person_id
+        LEFT JOIN schools s ON s.id = ss.school_id
+        ORDER BY ss.active DESC, ss.created_at DESC`);
+      const byId = /* @__PURE__ */ new Map();
+      for (const p of partners.rows) {
+        const k = String(p.school_id);
+        if (!byId.has(k)) byId.set(k, []);
+        byId.get(k).push({
+          ...p,
+          percent: Number(p.percent),
+          // A tenure that has run out is not a live obligation.
+          expired: !!p.ends_on && new Date(p.ends_on) < /* @__PURE__ */ new Date()
+        });
+      }
+      res.json({
+        period: { from, to, label },
+        schools: rows.rows.map((r) => {
+          const share = byId.get(String(r.school_id)) || [];
+          const companyShare = Number(r.company_share || 0);
+          const live = share.filter((p) => p.active && !p.expired);
+          const owed = live.reduce((a, p) => a + companyShare * p.percent / 100, 0);
+          return {
+            school_id: r.school_id,
+            school_name: r.school_name,
+            payments: Number(r.payments),
+            collected: Number(r.collected),
+            company_share: companyShare,
+            partners: share,
+            owed_to_partners: owed,
+            company_keeps: companyShare - owed
+          };
+        }),
+        unassigned_partners: partners.rows.filter((p) => p.school_id === null).map((p) => ({ ...p, percent: Number(p.percent) }))
+      });
+    } finally {
+      client.release();
+    }
+  }));
+  router.post("/schools/partners", founderOnly(async (req, res) => {
+    const {
+      school_id,
+      person_id,
+      body_name,
+      contact,
+      kind,
+      percent,
+      starts_on,
+      ends_on,
+      note
+    } = req.body;
+    if (!person_id && !body_name?.trim()) {
+      throw new Error("Name the person or the body this agreement is with.");
+    }
+    const pct = Number(percent);
+    if (!(pct > 0 && pct <= 100)) throw new Error("Percent must be between 0 and 100.");
+    const r = await pool2.query(
+      `INSERT INTO school_stakeholders
+         (school_id, person_id, body_name, contact, kind, percent,
+          starts_on, ends_on, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,current_date),$8,$9,$10)
+       RETURNING *`,
+      [
+        school_id || null,
+        person_id || null,
+        body_name || null,
+        contact || null,
+        kind || "student_association",
+        pct,
+        starts_on || null,
+        ends_on || null,
+        note || null,
+        req.adminEmail
+      ]
+    );
+    res.status(201).json(r.rows[0]);
+  }));
+  router.put("/schools/partners/:id", founderOnly(async (req, res) => {
+    const { percent, ends_on, active, note, kind, contact } = req.body;
+    const r = await pool2.query(
+      `UPDATE school_stakeholders SET
+         percent = COALESCE($1, percent),
+         ends_on = COALESCE($2, ends_on),
+         active  = COALESCE($3, active),
+         note    = COALESCE($4, note),
+         kind    = COALESCE($5, kind),
+         contact = COALESCE($6, contact)
+       WHERE id = $7 RETURNING *`,
+      [
+        percent ?? null,
+        ends_on ?? null,
+        active ?? null,
+        note ?? null,
+        kind ?? null,
+        contact ?? null,
+        req.params.id
+      ]
+    );
+    if (!r.rows[0]) throw new Error("No such agreement.");
+    res.json(r.rows[0]);
+  }));
+  router.delete("/schools/partners/:id", founderOnly(async (req, res) => {
+    await pool2.query(
+      `UPDATE school_stakeholders
+       SET active = false, ends_on = COALESCE(ends_on, current_date)
+       WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ ok: true });
+  }));
+  router.get("/schools/list", handle(async (_req, res) => {
+    const r = await pool2.query("SELECT id, name FROM schools ORDER BY name");
+    res.json(r.rows);
+  }));
+  router.get("/investors", handle(async (_req, res) => {
+    const r = await pool2.query(`
+      SELECT mi.*, sh.full_name AS person_name, sh.role_title
+      FROM model_investors mi
+      LEFT JOIN shareholders sh ON sh.id = mi.person_id
+      ORDER BY mi.created_at`);
+    res.json(r.rows.map((i) => ({ ...i, amount: Number(i.amount) })));
+  }));
+  router.post("/investors", founderOnly(async (req, res) => {
+    const { name, person_id, amount, is_test, note } = req.body;
+    if (!name?.trim() && !person_id) throw new Error("Give the investor a name.");
+    const r = await pool2.query(
+      `INSERT INTO model_investors (name, person_id, amount, is_test, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        name?.trim() || "Test investor",
+        person_id || null,
+        Math.round(Number(amount || 0)),
+        is_test !== false,
+        note || null,
+        req.adminEmail
+      ]
+    );
+    res.status(201).json({ ...r.rows[0], amount: Number(r.rows[0].amount) });
+  }));
+  router.put("/investors/:id", founderOnly(async (req, res) => {
+    const { name, amount, note, person_id } = req.body;
+    const r = await pool2.query(
+      `UPDATE model_investors SET
+         name = COALESCE($1, name),
+         amount = COALESCE($2, amount),
+         note = COALESCE($3, note),
+         person_id = COALESCE($4, person_id)
+       WHERE id = $5 RETURNING *`,
+      [
+        name ?? null,
+        amount === void 0 ? null : Math.round(Number(amount)),
+        note ?? null,
+        person_id ?? null,
+        req.params.id
+      ]
+    );
+    if (!r.rows[0]) throw new Error("No such investor.");
+    res.json({ ...r.rows[0], amount: Number(r.rows[0].amount) });
+  }));
+  router.delete("/investors/:id", founderOnly(async (req, res) => {
+    await pool2.query("DELETE FROM model_investors WHERE id = $1", [req.params.id]);
+    res.json({ ok: true });
+  }));
+  return router;
+}
+
 // server.ts
 import cors from "cors";
 dotenv.config();
@@ -2873,6 +3745,8 @@ app.use("/api/library", requireAdmin, createLibraryRouter(pool));
 app.use("/api/users", requireAdmin, createUserRouter(pool));
 app.use("/api/finance", requireAdmin, createFinanceRouter(pool));
 app.use("/api/finance", requireAdmin, createFinanceV2Router(pool));
+app.use("/api/people", requireAdmin, createPeopleRouter(pool));
+app.use("/api/live", requireAdmin, createLiveRouter(pool));
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM company_expenses ORDER BY expense_date DESC");
@@ -3066,9 +3940,9 @@ app.get("/api/metadata/stats", requireAdmin, async (req, res) => {
          SELECT SUM(total) as total FROM (
            SELECT COALESCE(SUM(amount) / 100.0, 0) as total FROM membership_payments
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM gists WHERE amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM ticket_purchases WHERE amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE amount_paid > 0
          ) sub
        `);
       total_revenue = parseFloat(revRes.rows[0].total || 0);
@@ -3076,9 +3950,9 @@ app.get("/api/metadata/stats", requireAdmin, async (req, res) => {
          SELECT SUM(total) as total FROM (
            SELECT COALESCE(SUM(amount) / 100.0, 0) as total FROM membership_payments WHERE created_at >= current_date
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
          ) sub
        `);
       revenue_today = parseFloat(revTodayRes.rows[0].total || 0);
@@ -3112,7 +3986,7 @@ app.get("/api/transactions", requireAdmin, async (req, res) => {
     `);
     const gistRes = await pool.query(`
       SELECT id::text, 'Gist' as type,
-             COALESCE(NULLIF(amount_paid, 0) / 100.0, total_price, 0) as amount,
+             COALESCE(NULLIF(amount_paid, 0), total_price, 0) as amount,
              status, payment_reference as reference, user_id::text as user_email, created_at
       FROM gists
       WHERE ((amount_paid IS NOT NULL AND amount_paid > 0) OR paid = true)
@@ -3120,7 +3994,7 @@ app.get("/api/transactions", requireAdmin, async (req, res) => {
       ORDER BY created_at DESC LIMIT 200
     `);
     const ticketRes = await pool.query(`
-      SELECT id::text, 'Ticket' as type, (amount_paid / 100.0) as amount, status, payment_reference as reference, user_id::text as user_email, created_at
+      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, payment_reference as reference, user_id::text as user_email, created_at
       FROM ticket_purchases
       WHERE amount_paid IS NOT NULL AND amount_paid > 0
       ORDER BY created_at DESC LIMIT 200
@@ -3375,9 +4249,9 @@ app.get("/api/dashboard/stats", requireAdmin, async (req, res) => {
       SELECT SUM(total) as total FROM (
          SELECT COALESCE(SUM(amount) / 100.0, 0) as total FROM membership_payments WHERE created_at >= current_date
          UNION ALL
-         SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
+         SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
          UNION ALL
-         SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+         SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
       ) sub
     `);
     const stores = await pool.query("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active FROM stores");
@@ -3583,12 +4457,12 @@ app.get("/api/analytics", requireAdmin, async (req, res) => {
          WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
          GROUP BY month
          UNION ALL
-         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid) / 100.0, 0) as amount
+         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid), 0) as amount
          FROM gists
          WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months') AND amount_paid > 0
          GROUP BY month
          UNION ALL
-         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid) / 100.0, 0) as amount
+         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid), 0) as amount
          FROM ticket_purchases
          WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months') AND amount_paid > 0
          GROUP BY month
