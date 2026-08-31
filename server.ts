@@ -10,6 +10,7 @@ import { createLibraryRouter } from "./server/libraryRoutes.js";
 import { createUserRouter } from "./server/userRoutes.js";
 import { createFinanceRouter } from "./server/financeRoutes.js";
 import { createFinanceV2Router } from "./server/financeV2Routes.js";
+import { createPeopleRouter } from "./server/peopleRoutes.js";
 
 dotenv.config();
 
@@ -290,6 +291,8 @@ app.use('/api/finance', requireAdmin, createFinanceRouter(pool));
 // deferred pay, milestones, roles and audit. Same mount point, second
 // router, so the client sees one /api/finance surface.
 app.use('/api/finance', requireAdmin, createFinanceV2Router(pool));
+// Staff and stakeholders: access, salary, contracts, rewards.
+app.use('/api/people', requireAdmin, createPeopleRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {
@@ -494,26 +497,24 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
     let total_revenue = 0;
     let revenue_today = 0;
     try {
-       // MONEY UNITS -- read this before editing any sum below.
+       // MONEY UNITS -- read this before editing any sum below. See
+       // migrations/0084_fix_money_units.sql for how these were established.
        //
-       // Paystack settles in KOBO, so every column the payment webhook writes
-       // holds kobo: membership_payments.amount, gists.amount_paid,
-       // ticket_purchases.amount_paid. A Plus subscription at N700 is stored
-       // as 70000, which is correct.
+       // KOBO, and therefore divided by 100:
+       //   membership_payments.amount        70000 = N700, set by a trigger
        //
-       // Columns the APP sets are already naira: gists.total_price,
-       // gists.price_per_day, tickets.price.
-       //
-       // Until 2026-08 this query divided membership by 100 and left gists and
-       // tickets raw, so every naira of gist and ticket revenue was reported as
-       // one hundred. Divide the kobo columns; leave the naira ones alone.
+       // NAIRA, and therefore NOT divided:
+       //   gists.amount_paid, ticket_purchases.amount_paid
+       //   The webhooks convert before storing. Proven by real data: 14
+       //   ticket payments summing to 16,500 against a N100 minimum price is
+       //   N16,500, not N165.
        const revRes = await pool.query(`
          SELECT SUM(total) as total FROM (
            SELECT COALESCE(SUM(amount) / 100.0, 0) as total FROM membership_payments
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM gists WHERE amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM ticket_purchases WHERE amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE amount_paid > 0
          ) sub
        `);
        total_revenue = parseFloat(revRes.rows[0].total || 0);
@@ -522,9 +523,9 @@ app.get('/api/metadata/stats', requireAdmin, async (req, res) => {
          SELECT SUM(total) as total FROM (
            SELECT COALESCE(SUM(amount) / 100.0, 0) as total FROM membership_payments WHERE created_at >= current_date
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
            UNION ALL
-           SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+           SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
          ) sub
        `);
        revenue_today = parseFloat(revTodayRes.rows[0].total || 0);
@@ -558,12 +559,11 @@ app.get('/api/transactions', requireAdmin, async (req, res) => {
       FROM membership_payments
       ORDER BY created_at DESC LIMIT 200
     `);
-    // amount_paid is kobo, total_price is naira -- they cannot be COALESCEd
-    // raw. A gist paid through Paystack and one that was only priced would
-    // otherwise differ by 100x in the same column.
+    // Both columns are NAIRA, so the COALESCE is safe and nothing is
+    // divided. See migrations/0084_fix_money_units.sql.
     const gistRes = await pool.query(`
       SELECT id::text, 'Gist' as type,
-             COALESCE(NULLIF(amount_paid, 0) / 100.0, total_price, 0) as amount,
+             COALESCE(NULLIF(amount_paid, 0), total_price, 0) as amount,
              status, payment_reference as reference, user_id::text as user_email, created_at
       FROM gists
       WHERE ((amount_paid IS NOT NULL AND amount_paid > 0) OR paid = true)
@@ -571,7 +571,7 @@ app.get('/api/transactions', requireAdmin, async (req, res) => {
       ORDER BY created_at DESC LIMIT 200
     `);
     const ticketRes = await pool.query(`
-      SELECT id::text, 'Ticket' as type, (amount_paid / 100.0) as amount, status, payment_reference as reference, user_id::text as user_email, created_at
+      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, payment_reference as reference, user_id::text as user_email, created_at
       FROM ticket_purchases
       WHERE amount_paid IS NOT NULL AND amount_paid > 0
       ORDER BY created_at DESC LIMIT 200
@@ -847,9 +847,9 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
       SELECT SUM(total) as total FROM (
          SELECT COALESCE(SUM(amount) / 100.0, 0) as total FROM membership_payments WHERE created_at >= current_date
          UNION ALL
-         SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
+         SELECT COALESCE(SUM(amount_paid), 0) as total FROM gists WHERE created_at >= current_date AND amount_paid > 0
          UNION ALL
-         SELECT COALESCE(SUM(amount_paid) / 100.0, 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
+         SELECT COALESCE(SUM(amount_paid), 0) as total FROM ticket_purchases WHERE created_at >= current_date AND amount_paid > 0
       ) sub
     `);
     
@@ -1085,12 +1085,12 @@ app.get('/api/analytics', requireAdmin, async (req, res) => {
          WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months')
          GROUP BY month
          UNION ALL
-         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid) / 100.0, 0) as amount
+         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid), 0) as amount
          FROM gists
          WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months') AND amount_paid > 0
          GROUP BY month
          UNION ALL
-         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid) / 100.0, 0) as amount
+         SELECT date_trunc('month', created_at) as month, COALESCE(SUM(amount_paid), 0) as amount
          FROM ticket_purchases
          WHERE created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '11 months') AND amount_paid > 0
          GROUP BY month

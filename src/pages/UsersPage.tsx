@@ -454,7 +454,7 @@ export default function UsersPage() {
                               <p className="text-xs text-slate-500">Status: {t.status}</p>
                             </div>
                             <div className="ml-auto text-right">
-                              <span className="font-bold text-slate-800 dark:text-slate-200">₦{t.amount_paid / 100}</span>
+                              <span className="font-bold text-slate-800 dark:text-slate-200">₦{Number(t.amount_paid || 0).toLocaleString('en-NG')}</span>
                               <p className="text-xs text-slate-400">{new Date(t.created_at).toLocaleDateString()}</p>
                             </div>
                           </div>
