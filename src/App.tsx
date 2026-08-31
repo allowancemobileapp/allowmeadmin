@@ -22,7 +22,8 @@ import {
   UserSquare,
   Menu,
   X,
-  LineChart
+  LineChart,
+  Landmark
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -59,6 +60,7 @@ import Metadata from './pages/Metadata';
 import Analytics from './pages/Analytics';
 import Approvals from './pages/Approvals';
 import UsersPage from './pages/UsersPage';
+import Finance from './pages/Finance';
 
 function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: boolean) => void }) {
   const location = useLocation();
@@ -87,6 +89,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
     { to: '/schools-mgmt', label: 'School Mgmt', icon: School, id: 'schools_mgmt' },
     { to: '/metadata', label: 'System Metadata', icon: Package, id: 'metadata' },
     { to: '/analytics', label: 'Analytics & Growth', icon: LineChart, id: 'analytics' },
+    { to: '/finance', label: 'Company Finance', icon: Landmark, id: 'finance' },
   ];
 
   const allowedPages = permissions?.pages || [];
@@ -340,6 +343,7 @@ function AppRouter() {
             
             <Route path="/metadata" element={<Metadata />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/finance" element={<Finance />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>
