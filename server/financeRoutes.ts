@@ -91,6 +91,131 @@ export function createFinanceRouter(pool: Pool) {
 
   // Every money figure the top of the page shows, in one query set so the
   // numbers on screen are all from the same instant and cannot disagree.
+
+  /**
+   * EVERYTHING THE PAGE NEEDS ON LOAD, IN ONE REQUEST, ON ONE CONNECTION.
+   *
+   * The page used to fire four requests in parallel (summary, timeseries,
+   * cap-table, role). On Vercel those can land on four DIFFERENT function
+   * instances, each with its own pool, and Supabase caps the whole project at
+   * 15 client connections -- so capping each pool at 3 does not help when
+   * there are five instances. That is what EMAXCONNSESSION was telling us.
+   *
+   * One request means one instance. pool.connect() once and running the
+   * queries SEQUENTIALLY on that single client means one connection, no
+   * matter how many queries are involved. Slower on paper; it is the
+   * difference between loading and not loading.
+   */
+  router.get('/bootstrap', handleReq(async (req: any, res: any) => {
+    const { from, to, label } = range(req.query);
+    const client = await pool.connect();
+    try {
+      const q = (text: string, params: any[] = []) => client.query(text, params);
+
+      const income = await q(`
+        SELECT stream, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS payments
+        FROM company_income WHERE received_at::date BETWEEN $1 AND $2
+        GROUP BY stream ORDER BY total DESC`, [from, to]);
+
+      const expenses = await q(`
+        SELECT COALESCE(reason, 'Uncategorised') AS category,
+               COALESCE(SUM(amount), 0) AS total, COUNT(*) AS entries
+        FROM company_expenses WHERE expense_date::date BETWEEN $1 AND $2
+        GROUP BY reason ORDER BY total DESC`, [from, to]);
+
+      const totals = await q(`
+        SELECT
+          (SELECT COALESCE(SUM(amount), 0) FROM company_investments
+            WHERE invested_on BETWEEN $1 AND $2 AND disposed_on IS NULL) AS invested,
+          (SELECT COALESCE(SUM(COALESCE(current_value, amount)), 0)
+             FROM company_investments WHERE disposed_on IS NULL) AS assets_worth,
+          (SELECT COALESCE(SUM(amount), 0) FROM company_liabilities
+            WHERE settled_on IS NULL) AS liabilities,
+          (SELECT COALESCE(SUM(monthly_gross), 0) FROM staff_salaries
+            WHERE ended_on IS NULL) AS payroll_monthly,
+          (SELECT row_to_json(v) FROM (
+              SELECT amount, valued_on, method, basis FROM company_valuations
+              ORDER BY valued_on DESC, created_at DESC LIMIT 1) v) AS valuation,
+          (SELECT COALESCE(SUM(amount), 0) FROM company_income
+            WHERE received_at::date >= ($1::date - ($2::date - $1::date) - 1)
+              AND received_at::date < $1::date) AS prior_income`, [from, to]);
+
+      const series = await q(`
+        WITH days AS (SELECT generate_series($1::date, $2::date, '1 day')::date AS day)
+        SELECT d.day,
+          COALESCE((SELECT SUM(amount) FROM company_income
+                     WHERE received_at::date = d.day), 0) AS income,
+          COALESCE((SELECT SUM(amount) FROM company_expenses
+                     WHERE expense_date::date = d.day), 0) AS expenses
+        FROM days d ORDER BY d.day`, [from, to]);
+
+      const cap = await q('SELECT * FROM cap_table');
+
+      const roleRow = await q(
+        `SELECT role FROM finance_users
+          WHERE lower(email) = lower($1) AND active`, [req.adminEmail || '']);
+
+      const agg = totals.rows[0];
+      const totalIncome = income.rows.reduce((a, r) => a + Number(r.total), 0);
+      const totalExpense = expenses.rows.reduce((a, r) => a + Number(r.total), 0);
+      const priorIncome = Number(agg.prior_income || 0);
+
+      res.json({
+        role: roleRow.rows[0]?.role || 'none',
+        summary: {
+          period: { from, to, label },
+          streams: income.rows.map((r) => ({
+            stream: r.stream, total: Number(r.total), payments: Number(r.payments),
+          })),
+          expense_categories: expenses.rows.map((r) => ({
+            category: r.category, total: Number(r.total), entries: Number(r.entries),
+          })),
+          totals: {
+            income: totalIncome,
+            expenses: totalExpense,
+            profit: totalIncome - totalExpense,
+            margin_pct: totalIncome > 0
+              ? ((totalIncome - totalExpense) / totalIncome) * 100 : 0,
+            invested: Number(agg.invested || 0),
+            assets_worth: Number(agg.assets_worth || 0),
+            liabilities: Number(agg.liabilities || 0),
+            payroll_monthly: Number(agg.payroll_monthly || 0),
+            prior_income: priorIncome,
+            income_change_pct: priorIncome > 0
+              ? ((totalIncome - priorIncome) / priorIncome) * 100 : null,
+          },
+          valuation: agg.valuation ? {
+            amount: Number(agg.valuation.amount),
+            valued_on: agg.valuation.valued_on,
+            method: agg.valuation.method,
+            basis: agg.valuation.basis,
+          } : null,
+        },
+        series: series.rows.map((r) => ({
+          day: r.day,
+          income: Number(r.income),
+          expenses: Number(r.expenses),
+          profit: Number(r.income) - Number(r.expenses),
+        })),
+        capTable: {
+          holders: cap.rows.map((r) => ({
+            ...r,
+            shares: Number(r.shares),
+            votes: Number(r.votes),
+            ownership_pct: Number(r.ownership_pct),
+            voting_pct: Number(r.voting_pct),
+            all_shares: Number(r.all_shares),
+            all_votes: Number(r.all_votes),
+          })),
+        },
+      });
+    } finally {
+      // ALWAYS. A leaked client is a connection nobody can reclaim until the
+      // instance dies, and fifteen of those is the whole project down.
+      client.release();
+    }
+  }));
+
   router.get('/summary', handleReq(async (req: any, res: any) => {
     const { from, to, label } = range(req.query);
 

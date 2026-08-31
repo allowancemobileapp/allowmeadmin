@@ -80,17 +80,23 @@ export default function Finance() {
     return p.toString();
   }, [period, custom]);
 
+  /**
+   * ONE request for the whole page.
+   *
+   * This used to be four in parallel plus a fifth for the role. On Vercel
+   * each can land on a different function instance, each opening its own
+   * database connections against a project-wide cap of 15 -- which is what
+   * EMAXCONNSESSION was. One request is one instance is one connection.
+   */
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const q = qs();
-      const [s, t, ct] = await Promise.all([
-        get<any>(`/api/finance/summary?${q}`),
-        get<any>(`/api/finance/timeseries?${q}`),
-        get<any>('/api/finance/cap-table'),
-      ]);
-      setSummary(s); setSeries(t); setCapTable(ct);
+      const b = await get<any>(`/api/finance/bootstrap?${qs()}`);
+      setSummary(b.summary);
+      setSeries(b.series);
+      setCapTable(b.capTable);
+      setRole(b.role || 'none');
     } catch (e: any) {
       setError(e.message || 'Could not load the finance data.');
     } finally {
@@ -99,13 +105,6 @@ export default function Finance() {
   }, [qs]);
 
   useEffect(() => { load(); }, [load]);
-
-  // /role is one query. /me is eleven, and is only needed by the My stake tab.
-  useEffect(() => {
-    get<any>('/api/finance/role')
-      .then((m) => setRole(m.role || 'none'))
-      .catch(() => setRole('none'));
-  }, []);
 
   const TABS = [
     { id: 'overview',    label: 'Money in & out',  icon: Wallet },
