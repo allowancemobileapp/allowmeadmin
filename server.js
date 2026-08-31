@@ -727,51 +727,51 @@ function createFinanceRouter(pool2) {
   };
   router.get("/summary", handleReq(async (req, res) => {
     const { from, to, label } = range(req.query);
-    const [income, expenses, investments, liabilities, payroll, valuation, prior] = await Promise.all([
+    const [income, expenses, totals] = await Promise.all([
       pool2.query(`
-          SELECT stream, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS payments
-          FROM company_income
-          WHERE received_at::date BETWEEN $1 AND $2
-          GROUP BY stream ORDER BY total DESC
-        `, [from, to]),
+        SELECT stream, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS payments
+        FROM company_income
+        WHERE received_at::date BETWEEN $1 AND $2
+        GROUP BY stream ORDER BY total DESC
+      `, [from, to]),
       pool2.query(`
-          SELECT COALESCE(reason, 'Uncategorised') AS category,
-                 COALESCE(SUM(amount), 0) AS total, COUNT(*) AS entries
-          FROM company_expenses
-          WHERE expense_date::date BETWEEN $1 AND $2
-          GROUP BY reason ORDER BY total DESC
-        `, [from, to]),
+        SELECT COALESCE(reason, 'Uncategorised') AS category,
+               COALESCE(SUM(amount), 0) AS total, COUNT(*) AS entries
+        FROM company_expenses
+        WHERE expense_date::date BETWEEN $1 AND $2
+        GROUP BY reason ORDER BY total DESC
+      `, [from, to]),
       pool2.query(`
-          SELECT COALESCE(SUM(amount), 0) AS spent,
-                 COALESCE(SUM(COALESCE(current_value, amount)), 0) AS worth
-          FROM company_investments
-          WHERE invested_on BETWEEN $1 AND $2 AND disposed_on IS NULL
-        `, [from, to]),
-      // Everything still owed, whenever it was incurred -- a debt does not
-      // stop existing because the date filter moved.
-      pool2.query(`
-          SELECT COALESCE(SUM(amount), 0) AS owed
-          FROM company_liabilities WHERE settled_on IS NULL
-        `),
-      pool2.query(`
-          SELECT COALESCE(SUM(monthly_gross), 0) AS monthly
-          FROM staff_salaries WHERE ended_on IS NULL
-        `),
-      pool2.query(`
-          SELECT amount, valued_on, method FROM company_valuations
-          ORDER BY valued_on DESC, created_at DESC LIMIT 1
-        `),
-      // The same length of window immediately before this one, so the page
-      // can say whether things are getting better or worse.
-      pool2.query(`
-          SELECT COALESCE(SUM(amount), 0) AS total FROM company_income
-          WHERE received_at::date >= ($1::date - ($2::date - $1::date) - 1)
-            AND received_at::date < $1::date
-        `, [from, to])
+        SELECT
+          (SELECT COALESCE(SUM(amount), 0) FROM company_investments
+            WHERE invested_on BETWEEN $1 AND $2 AND disposed_on IS NULL)
+            AS invested,
+          -- Everything still owned, NOT just what was bought in this window.
+          -- The card is labelled "Assets owned"; scoping it to the period
+          -- made it read as zero on any range you had not bought something in.
+          (SELECT COALESCE(SUM(COALESCE(current_value, amount)), 0)
+             FROM company_investments WHERE disposed_on IS NULL)
+            AS assets_worth,
+          -- A debt does not stop existing because the date filter moved.
+          (SELECT COALESCE(SUM(amount), 0) FROM company_liabilities
+            WHERE settled_on IS NULL) AS liabilities,
+          (SELECT COALESCE(SUM(monthly_gross), 0) FROM staff_salaries
+            WHERE ended_on IS NULL) AS payroll_monthly,
+          (SELECT row_to_json(v) FROM (
+              SELECT amount, valued_on, method, basis FROM company_valuations
+              ORDER BY valued_on DESC, created_at DESC LIMIT 1) v)
+            AS valuation,
+          -- The same length of window immediately before this one, so the
+          -- page can say whether things are getting better or worse.
+          (SELECT COALESCE(SUM(amount), 0) FROM company_income
+            WHERE received_at::date >= ($1::date - ($2::date - $1::date) - 1)
+              AND received_at::date < $1::date) AS prior_income
+      `, [from, to])
     ]);
+    const agg = totals.rows[0];
     const totalIncome = income.rows.reduce((s, r) => s + Number(r.total), 0);
     const totalExpense = expenses.rows.reduce((s, r) => s + Number(r.total), 0);
-    const priorIncome = Number(prior.rows[0]?.total || 0);
+    const priorIncome = Number(agg.prior_income || 0);
     res.json({
       period: { from, to, label },
       streams: income.rows.map((r) => ({
@@ -789,17 +789,18 @@ function createFinanceRouter(pool2) {
         expenses: totalExpense,
         profit: totalIncome - totalExpense,
         margin_pct: totalIncome > 0 ? (totalIncome - totalExpense) / totalIncome * 100 : 0,
-        invested: Number(investments.rows[0]?.spent || 0),
-        assets_worth: Number(investments.rows[0]?.worth || 0),
-        liabilities: Number(liabilities.rows[0]?.owed || 0),
-        payroll_monthly: Number(payroll.rows[0]?.monthly || 0),
+        invested: Number(agg.invested || 0),
+        assets_worth: Number(agg.assets_worth || 0),
+        liabilities: Number(agg.liabilities || 0),
+        payroll_monthly: Number(agg.payroll_monthly || 0),
         prior_income: priorIncome,
         income_change_pct: priorIncome > 0 ? (totalIncome - priorIncome) / priorIncome * 100 : null
       },
-      valuation: valuation.rows[0] ? {
-        amount: Number(valuation.rows[0].amount),
-        valued_on: valuation.rows[0].valued_on,
-        method: valuation.rows[0].method
+      valuation: agg.valuation ? {
+        amount: Number(agg.valuation.amount),
+        valued_on: agg.valuation.valued_on,
+        method: agg.valuation.method,
+        basis: agg.valuation.basis
       } : null
     });
   }));
@@ -2369,12 +2370,20 @@ function createFinanceV2Router(pool2) {
     await audit(req, "capital.add", "capital_events", r.rows[0].id, null, r.rows[0]);
     res.status(201).json(r.rows[0]);
   }));
+  router.get("/role", handle(async (req, res) => {
+    const r = await pool2.query(
+      `SELECT role, is_director, shareholder_id IS NOT NULL AS linked
+       FROM finance_users WHERE lower(email) = lower($1) AND active`,
+      [req.adminEmail || ""]
+    );
+    res.json(r.rows[0] || { role: "none", is_director: false, linked: false });
+  }));
   router.get("/me", handle(async (req, res) => {
-    const role = await roleOf(req.adminEmail);
     const u = await pool2.query(
       `SELECT * FROM finance_users WHERE lower(email) = lower($1) AND active`,
       [req.adminEmail]
     );
+    const role = u.rows[0]?.role || "none";
     if (u.rows.length === 0) return res.json({ role, linked: false });
     const sid = u.rows[0].shareholder_id;
     if (!sid) return res.json({ role, linked: false });
@@ -2542,7 +2551,15 @@ var isLocalDb = connectionString.includes("localhost") || connectionString.inclu
 var cleanConnectionString = connectionString.split("?")[0];
 var pool = new Pool({
   connectionString: cleanConnectionString,
-  ssl: isLocalDb ? false : { rejectUnauthorized: false }
+  ssl: isLocalDb ? false : { rejectUnauthorized: false },
+  max: isLocalDb ? 10 : 3,
+  idleTimeoutMillis: 1e4,
+  // Fail with a readable error rather than hanging the request for 30s.
+  connectionTimeoutMillis: 15e3,
+  allowExitOnIdle: true
+});
+pool.on("error", (err) => {
+  console.error("[pg] idle client error:", err.message);
 });
 var originalQuery = pool.query.bind(pool);
 pool.query = async function(...args) {

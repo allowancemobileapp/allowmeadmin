@@ -7,6 +7,9 @@ export default function SchoolManagement() {
   const [agents, setAgents] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'fees' | 'agents'>('fees');
   const [loading, setLoading] = useState(true);
+  // Swallowing this into console.error is why an outage looked like an
+  // empty page for weeks. Show the user what actually went wrong.
+  const [error, setError] = useState<string | null>(null);
   const { get, put, post, del } = useApi();
 
   // Agent form modal state
@@ -22,6 +25,7 @@ export default function SchoolManagement() {
 
   const fetchData = async () => {
     setLoading(true);
+    setError(null);
     try {
       const [schoolData, agentData] = await Promise.all([
         get<any[]>('/api/schools'),
@@ -29,8 +33,9 @@ export default function SchoolManagement() {
       ]);
       setSchools(schoolData);
       setAgents(agentData);
-    } catch(err) {
+    } catch(err: any) {
       console.error(err);
+      setError(err?.message || 'Could not load schools or delivery agents.');
     } finally {
       setLoading(false);
     }
@@ -107,6 +112,17 @@ export default function SchoolManagement() {
         <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">School Management</h1>
         <p className="text-sm text-slate-500 mt-1">Manage delivery fees and delivery agents for each school.</p>
       </div>
+
+      {error && (
+        <div className="p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
+          <p className="text-sm font-bold text-rose-700 dark:text-rose-400">Could not load.</p>
+          <p className="text-xs text-rose-600 dark:text-rose-500 mt-1">{error}</p>
+          <button onClick={fetchData}
+                  className="mt-3 px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">
+            Try again
+          </button>
+        </div>
+      )}
 
       <div className="flex bg-slate-200 dark:bg-slate-800 p-1 rounded-lg w-full max-w-sm">
         <button

@@ -100,8 +100,9 @@ export default function Finance() {
 
   useEffect(() => { load(); }, [load]);
 
+  // /role is one query. /me is eleven, and is only needed by the My stake tab.
   useEffect(() => {
-    get<any>('/api/finance/me')
+    get<any>('/api/finance/role')
       .then((m) => setRole(m.role || 'none'))
       .catch(() => setRole('none'));
   }, []);

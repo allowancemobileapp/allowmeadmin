@@ -714,11 +714,28 @@ export function createFinanceV2Router(pool: Pool) {
    * is showing a shareholder a number that looks like their net worth and is
    * not.
    */
+  /**
+   * Just the caller's role. ONE query.
+   *
+   * The page needs this on every load to decide which tabs to show, and it
+   * used to get it from /me -- which runs eleven queries to build a full
+   * stakeholder statement. That was most of the connection burst that hit
+   * Supabase's 15-client cap.
+   */
+  router.get('/role', handle(async (req: any, res: any) => {
+    const r = await pool.query(
+      `SELECT role, is_director, shareholder_id IS NOT NULL AS linked
+       FROM finance_users WHERE lower(email) = lower($1) AND active`,
+      [req.adminEmail || '']);
+    res.json(r.rows[0] || { role: 'none', is_director: false, linked: false });
+  }));
+
   router.get('/me', handle(async (req: any, res: any) => {
-    const role = await roleOf(req.adminEmail);
+    // One lookup, not two -- roleOf() would have re-queried this same row.
     const u = await pool.query(
       `SELECT * FROM finance_users WHERE lower(email) = lower($1) AND active`,
       [req.adminEmail]);
+    const role = u.rows[0]?.role || 'none';
     if (u.rows.length === 0) return res.json({ role, linked: false });
 
     const sid = u.rows[0].shareholder_id;

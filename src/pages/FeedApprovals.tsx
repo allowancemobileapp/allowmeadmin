@@ -5,6 +5,7 @@ import { Check, X, FileText, Utensils, Box } from 'lucide-react';
 export default function FeedApprovals() {
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const { get, put } = useApi();
 
   const fetchData = async () => {
@@ -12,8 +13,10 @@ export default function FeedApprovals() {
     try {
       const data = await get<any[]>('/api/approvals/feed-submissions');
       setSubmissions(data);
-    } catch(err) {
+      setError(null);
+    } catch(err: any) {
       console.error(err);
+      setError(err?.message || 'Could not load feed submissions.');
     } finally {
       setLoading(false);
     }
@@ -95,6 +98,17 @@ export default function FeedApprovals() {
         <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-200">Feed Approvals</h1>
         <p className="text-sm text-slate-500 mt-1">Review pending library materials, food menus, and combos.</p>
       </div>
+
+      {error && (
+        <div className="p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
+          <p className="text-sm font-bold text-rose-700 dark:text-rose-400">Could not load.</p>
+          <p className="text-xs text-rose-600 dark:text-rose-500 mt-1">{error}</p>
+          <button onClick={fetchData}
+                  className="mt-3 px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">
+            Try again
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-sm text-slate-500 font-medium">Loading submissions...</div>

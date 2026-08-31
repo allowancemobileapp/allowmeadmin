@@ -94,59 +94,62 @@ export function createFinanceRouter(pool: Pool) {
   router.get('/summary', handleReq(async (req: any, res: any) => {
     const { from, to, label } = range(req.query);
 
-    const [income, expenses, investments, liabilities, payroll, valuation, prior] =
-      await Promise.all([
-        pool.query(`
-          SELECT stream, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS payments
-          FROM company_income
-          WHERE received_at::date BETWEEN $1 AND $2
-          GROUP BY stream ORDER BY total DESC
-        `, [from, to]),
+    // THREE ROUND TRIPS, NOT SEVEN.
+    //
+    // Supabase caps us at 15 client connections and this page used to fire
+    // about sixteen queries on first paint, which is how it hit
+    // EMAXCONNSESSION. The two GROUP BY queries have to stay separate; every
+    // remaining scalar folds into one statement, which is also three fewer
+    // round trips to eu-central-1.
+    const [income, expenses, totals] = await Promise.all([
+      pool.query(`
+        SELECT stream, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS payments
+        FROM company_income
+        WHERE received_at::date BETWEEN $1 AND $2
+        GROUP BY stream ORDER BY total DESC
+      `, [from, to]),
 
-        pool.query(`
-          SELECT COALESCE(reason, 'Uncategorised') AS category,
-                 COALESCE(SUM(amount), 0) AS total, COUNT(*) AS entries
-          FROM company_expenses
-          WHERE expense_date::date BETWEEN $1 AND $2
-          GROUP BY reason ORDER BY total DESC
-        `, [from, to]),
+      pool.query(`
+        SELECT COALESCE(reason, 'Uncategorised') AS category,
+               COALESCE(SUM(amount), 0) AS total, COUNT(*) AS entries
+        FROM company_expenses
+        WHERE expense_date::date BETWEEN $1 AND $2
+        GROUP BY reason ORDER BY total DESC
+      `, [from, to]),
 
-        pool.query(`
-          SELECT COALESCE(SUM(amount), 0) AS spent,
-                 COALESCE(SUM(COALESCE(current_value, amount)), 0) AS worth
-          FROM company_investments
-          WHERE invested_on BETWEEN $1 AND $2 AND disposed_on IS NULL
-        `, [from, to]),
+      pool.query(`
+        SELECT
+          (SELECT COALESCE(SUM(amount), 0) FROM company_investments
+            WHERE invested_on BETWEEN $1 AND $2 AND disposed_on IS NULL)
+            AS invested,
+          -- Everything still owned, NOT just what was bought in this window.
+          -- The card is labelled "Assets owned"; scoping it to the period
+          -- made it read as zero on any range you had not bought something in.
+          (SELECT COALESCE(SUM(COALESCE(current_value, amount)), 0)
+             FROM company_investments WHERE disposed_on IS NULL)
+            AS assets_worth,
+          -- A debt does not stop existing because the date filter moved.
+          (SELECT COALESCE(SUM(amount), 0) FROM company_liabilities
+            WHERE settled_on IS NULL) AS liabilities,
+          (SELECT COALESCE(SUM(monthly_gross), 0) FROM staff_salaries
+            WHERE ended_on IS NULL) AS payroll_monthly,
+          (SELECT row_to_json(v) FROM (
+              SELECT amount, valued_on, method, basis FROM company_valuations
+              ORDER BY valued_on DESC, created_at DESC LIMIT 1) v)
+            AS valuation,
+          -- The same length of window immediately before this one, so the
+          -- page can say whether things are getting better or worse.
+          (SELECT COALESCE(SUM(amount), 0) FROM company_income
+            WHERE received_at::date >= ($1::date - ($2::date - $1::date) - 1)
+              AND received_at::date < $1::date) AS prior_income
+      `, [from, to]),
+    ]);
 
-        // Everything still owed, whenever it was incurred -- a debt does not
-        // stop existing because the date filter moved.
-        pool.query(`
-          SELECT COALESCE(SUM(amount), 0) AS owed
-          FROM company_liabilities WHERE settled_on IS NULL
-        `),
-
-        pool.query(`
-          SELECT COALESCE(SUM(monthly_gross), 0) AS monthly
-          FROM staff_salaries WHERE ended_on IS NULL
-        `),
-
-        pool.query(`
-          SELECT amount, valued_on, method FROM company_valuations
-          ORDER BY valued_on DESC, created_at DESC LIMIT 1
-        `),
-
-        // The same length of window immediately before this one, so the page
-        // can say whether things are getting better or worse.
-        pool.query(`
-          SELECT COALESCE(SUM(amount), 0) AS total FROM company_income
-          WHERE received_at::date >= ($1::date - ($2::date - $1::date) - 1)
-            AND received_at::date < $1::date
-        `, [from, to]),
-      ]);
+    const agg = totals.rows[0];
 
     const totalIncome = income.rows.reduce((s, r) => s + Number(r.total), 0);
     const totalExpense = expenses.rows.reduce((s, r) => s + Number(r.total), 0);
-    const priorIncome = Number(prior.rows[0]?.total || 0);
+    const priorIncome = Number(agg.prior_income || 0);
 
     res.json({
       period: { from, to, label },
@@ -166,19 +169,20 @@ export function createFinanceRouter(pool: Pool) {
         profit: totalIncome - totalExpense,
         margin_pct: totalIncome > 0
           ? ((totalIncome - totalExpense) / totalIncome) * 100 : 0,
-        invested: Number(investments.rows[0]?.spent || 0),
-        assets_worth: Number(investments.rows[0]?.worth || 0),
-        liabilities: Number(liabilities.rows[0]?.owed || 0),
-        payroll_monthly: Number(payroll.rows[0]?.monthly || 0),
+        invested: Number(agg.invested || 0),
+        assets_worth: Number(agg.assets_worth || 0),
+        liabilities: Number(agg.liabilities || 0),
+        payroll_monthly: Number(agg.payroll_monthly || 0),
         prior_income: priorIncome,
         income_change_pct: priorIncome > 0
           ? ((totalIncome - priorIncome) / priorIncome) * 100 : null,
       },
-      valuation: valuation.rows[0]
+      valuation: agg.valuation
         ? {
-            amount: Number(valuation.rows[0].amount),
-            valued_on: valuation.rows[0].valued_on,
-            method: valuation.rows[0].method,
+            amount: Number(agg.valuation.amount),
+            valued_on: agg.valuation.valued_on,
+            method: agg.valuation.method,
+            basis: agg.valuation.basis,
           }
         : null,
     });

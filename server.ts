@@ -38,9 +38,35 @@ const isLocalDb = connectionString.includes("localhost") || connectionString.inc
 // Vercel/Supabase may append ?sslmode=require which overrides pg's ssl property
 const cleanConnectionString = connectionString.split('?')[0];
 
+// POOL SIZING MATTERS HERE, and the default does not work on serverless.
+//
+// Supabase's pooler caps us at 15 client connections. `pg` defaults to max 10
+// PER POOL, and on Vercel every warm function instance holds its own pool --
+// so two instances can ask for 20 and the second one gets
+// EMAXCONNSESSION: "max clients reached in session mode".
+//
+// max: 3 means a burst of parallel queries QUEUES inside this process instead
+// of opening a connection each. Slightly slower under load, and it does not
+// fall over. The finance dashboard alone fires ~16 queries on first paint.
+//
+// idleTimeoutMillis returns connections quickly so a warm instance sitting
+// between requests is not sitting on the pool.
 const pool = new Pool({
   connectionString: cleanConnectionString,
-  ssl: isLocalDb ? false : { rejectUnauthorized: false }
+  ssl: isLocalDb ? false : { rejectUnauthorized: false },
+  max: isLocalDb ? 10 : 3,
+  idleTimeoutMillis: 10_000,
+  // Fail with a readable error rather than hanging the request for 30s.
+  connectionTimeoutMillis: 15_000,
+  allowExitOnIdle: true,
+});
+
+// A pool error on an IDLE client is emitted on the pool, and an unhandled
+// 'error' event takes the whole process down -- which on Vercel is
+// FUNCTION_INVOCATION_FAILED with no useful message. Log it and carry on;
+// pg discards the bad client and opens a fresh one on the next query.
+pool.on('error', (err) => {
+  console.error('[pg] idle client error:', err.message);
 });
 
 // Override pool.query to throw a descriptive error if the DB URL is misconfigured
