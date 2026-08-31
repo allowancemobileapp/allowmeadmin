@@ -214,6 +214,69 @@ describe('Test C - gross profit and payroll', () => {
 
 // ---------------------------------------------------------------------------
 
+describe('every income stream reaches gross profit', () => {
+  // The six streams the app settles automatically. Gross profit was built on
+  // a manual table alone and saw NONE of these, so it read zero -- Band 1 --
+  // and Band 1 pays four people nothing.
+  //
+  // These are the real per-stream figures for a month; the point of the test
+  // is that the total is the SUM of all six, not a subset.
+  const streams = {
+    membership:         naira(420_000),
+    gistAdverts:        naira(185_000),
+    eventTickets:       naira(310_000),
+    premiumGroups:      naira(95_000),
+    storeSubscriptions: naira(150_000),
+    deliveryCommission: naira(72_000),
+  };
+
+  const collections = Object.values(streams).reduce((a, v) => a + v, 0);
+
+  it('sums all six streams into collections', () => {
+    expect(collections).toBe(naira(1_232_000));
+  });
+
+  it('produces a band that reflects every stream, not just some', () => {
+    const all = computeGrossProfit({
+      collections,
+      gatewayFees: naira(18_000),
+      sellerPayouts: naira(0),
+      directInfrastructure: naira(40_000),
+      refunds: naira(9_000),
+    });
+    expect(all.grossProfit).toBe(naira(1_165_000));
+
+    // Drop tickets, gists and membership -- the three that were missing --
+    // and the month collapses from a real figure to almost nothing.
+    const missing = computeGrossProfit({
+      collections: collections - streams.membership
+                 - streams.gistAdverts - streams.eventTickets,
+      gatewayFees: naira(18_000),
+      sellerPayouts: naira(0),
+      directInfrastructure: naira(40_000),
+      refunds: naira(9_000),
+    });
+    expect(missing.grossProfit).toBe(naira(250_000));
+
+    // Both are Band 1 here, but the gap is N915,000 of gross profit -- and at
+    // a larger scale it is the difference between paying people and not.
+    expect(all.grossProfit - missing.grossProfit).toBe(naira(915_000));
+  });
+
+  it('crosses a band boundary that the missing streams would have hidden', () => {
+    // Same shape, scaled up: with every stream the month is Band 3. Lose the
+    // three that were absent and it reads Band 1 -- everyone paid nothing.
+    const full = naira(3_400_000);
+    const partial = naira(1_100_000);
+    expect(bandFor(full).band).toBe(3);
+    expect(bandFor(partial).band).toBe(1);
+    expect(payFor('officer', full).cash).toBe(naira(200_000));
+    expect(payFor('officer', partial).cash).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe('Test D - band boundaries', () => {
   const cases: [number, number][] = [
     [1_499_999, 1],

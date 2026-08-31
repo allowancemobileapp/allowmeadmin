@@ -94,6 +94,39 @@ export function GrossProfitTab({ get, post, role }: any) {
 
           <table className="w-full">
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {/* The streams behind the collections line. Without these the
+                  top figure is unauditable -- you cannot tell a quiet month
+                  from a stream that stopped reporting. */}
+              {(draft.breakdown?.automatic || []).map((a: any) => (
+                <tr key={'auto-' + a.slug} className="bg-slate-50/50 dark:bg-slate-800/20">
+                  <Td>
+                    <span className="text-slate-300 font-mono mr-2 pl-4">↳</span>
+                    <span className="text-xs text-slate-500">
+                      {a.stream}
+                      <span className="ml-2 text-slate-400">
+                        {a.payments} payment{a.payments === 1 ? '' : 's'}
+                      </span>
+                    </span>
+                  </Td>
+                  <Td right mono className="text-xs text-slate-500">
+                    {fmtKobo(a.collected)}
+                  </Td>
+                </tr>
+              ))}
+              {(draft.breakdown?.manual || []).map((m: any) => (
+                <tr key={'man-' + m.slug} className="bg-slate-50/50 dark:bg-slate-800/20">
+                  <Td>
+                    <span className="text-slate-300 font-mono mr-2 pl-4">↳</span>
+                    <span className="text-xs text-slate-500">
+                      {m.stream}
+                      <span className="ml-2 text-amber-600">entered by hand</span>
+                    </span>
+                  </Td>
+                  <Td right mono className="text-xs text-slate-500">
+                    {fmtKobo(m.collected)}
+                  </Td>
+                </tr>
+              ))}
               {lines.map((l) => (
                 <tr key={l.label}>
                   <Td>
@@ -117,6 +150,17 @@ export function GrossProfitTab({ get, post, role }: any) {
               </tr>
             </tbody>
           </table>
+
+          {draft.collections === 0 && (
+            <div className="px-5 pt-4">
+              <Note tone="amber" title="No money collected in this month.">
+                Every stream reads zero. If that is not right, check the month,
+                and check that payments are actually landing in the app's
+                payment tables — this figure decides four salaries, and zero
+                puts everyone on Band 1.
+              </Note>
+            </div>
+          )}
 
           <div className="p-5 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-4">
             <BandPill band={draft.band} />

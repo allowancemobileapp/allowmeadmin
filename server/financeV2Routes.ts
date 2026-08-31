@@ -79,53 +79,92 @@ export function createFinanceV2Router(pool: Pool) {
    * drops every non-deductible category rather than letting it through as an
    * "other" line that would quietly cut somebody's pay.
    */
-  const draftFor = async (month: string) => {
-    const [rev, exp] = await Promise.all([
-      pool.query(`
-        SELECT stream,
-               COALESCE(SUM(gross_collected),0) AS gross,
-               COALESCE(SUM(gateway_fee),0)     AS gateway,
-               COALESCE(SUM(seller_payout),0)   AS seller,
-               COALESCE(SUM(direct_cost),0)     AS direct
-        FROM revenue_entries
-        WHERE date_trunc('month', collected_on) = date_trunc('month', $1::date)
-        GROUP BY stream`, [month]),
-      pool.query(`
-        SELECT category, COALESCE(SUM(amount),0)::bigint AS amount
-        FROM company_expenses
-        WHERE date_trunc('month', expense_date) = date_trunc('month', $1::date)
-        GROUP BY category`, [month]),
-    ]);
+  const draftFor = async (month: string, client?: any) => {
+    // Runs on the caller's client when one is given, so certify() does not
+    // hold a transaction open on one connection while opening another.
+    const q = (text: string, params: any[] = []) =>
+      (client ?? pool).query(text, params);
 
-    const streams = rev.rows.map((r) => ({
+    // AUTOMATIC COLLECTIONS -- the six streams the app settles through
+    // Paystack: membership, gist adverts, event tickets, premium groups,
+    // store subscriptions, delivery commission.
+    //
+    // This used to be missing entirely, and it is almost all of the money.
+    // Gross profit was built on revenue_entries alone, which nobody types
+    // into, so it sat at zero -- Band 1 -- and Band 1 pays everyone nothing.
+    const auto = await q(
+      'SELECT * FROM month_collections_kobo($1::date)', [month]);
+
+    // MANUAL entries. For revenue that does NOT flow through the app: an
+    // offline sponsorship, a direct bank transfer. Anything settled through
+    // Paystack is already in `auto` above, and recording it here as well
+    // would double it.
+    const rev = await q(`
+      SELECT stream,
+             COALESCE(SUM(gross_collected),0) AS gross,
+             COALESCE(SUM(gateway_fee),0)     AS gateway,
+             COALESCE(SUM(seller_payout),0)   AS seller,
+             COALESCE(SUM(direct_cost),0)     AS direct
+      FROM revenue_entries
+      WHERE date_trunc('month', collected_on) = date_trunc('month', $1::date)
+      GROUP BY stream`, [month]);
+
+    const exp = await q(`
+      SELECT category, COALESCE(SUM(amount),0) AS amount
+      FROM company_expenses
+      WHERE date_trunc('month', expense_date) = date_trunc('month', $1::date)
+      GROUP BY category`, [month]);
+
+    const autoStreams = auto.rows.map((r: any) => ({
       stream: r.stream,
-      gross: Number(r.gross),
+      slug: r.slug,
+      collected: Number(r.collected_kobo),
+      payments: Number(r.payments),
+      source: 'automatic' as const,
+    }));
+
+    const manualStreams = rev.rows.map((r: any) => ({
+      stream: r.stream,
+      slug: r.stream,
+      collected: Number(r.gross),
       gateway: Number(r.gateway),
       seller: Number(r.seller),
       direct: Number(r.direct),
+      source: 'manual' as const,
     }));
 
-    const sum = (k: 'gross'|'gateway'|'seller'|'direct') =>
-      streams.reduce((a, s) => a + s[k], 0);
+    const sumBy = (rows: any[], k: string) =>
+      rows.reduce((a, x) => a + Number(x[k] || 0), 0);
 
-    // company_expenses.amount is naira numeric (it predates this module), so
-    // it is converted here rather than being trusted as kobo.
+    // company_expenses.amount is naira numeric -- it predates this module --
+    // so it is converted to kobo here rather than being trusted as kobo.
     const expenseBucket = (cat: string) =>
-      Math.round(Number(exp.rows.find((r) => r.category === cat)?.amount || 0) * 100);
+      Math.round(Number(exp.rows.find((r: any) => r.category === cat)?.amount || 0) * 100);
 
     const inputs = {
-      collections: sum('gross'),
-      // Fees can be recorded per transaction OR as an expense line. Both are
-      // counted, because a company will do one or the other and losing either
-      // would overstate gross profit and overpay.
-      gatewayFees: sum('gateway') + expenseBucket('payment_processing'),
-      sellerPayouts: sum('seller') + expenseBucket('seller_payouts'),
-      directInfrastructure: sum('direct') + expenseBucket('infrastructure'),
+      collections: sumBy(autoStreams, 'collected') + sumBy(manualStreams, 'collected'),
+      // A fee can be recorded per transaction OR as an expense line. Both are
+      // counted, because a company will do one or the other, and missing
+      // either would overstate gross profit and overpay.
+      gatewayFees: sumBy(manualStreams, 'gateway') + expenseBucket('payment_processing'),
+      sellerPayouts: sumBy(manualStreams, 'seller') + expenseBucket('seller_payouts'),
+      directInfrastructure: sumBy(manualStreams, 'direct') + expenseBucket('infrastructure'),
       refunds: expenseBucket('refunds'),
     };
 
     const result = computeGrossProfit(inputs);
-    return { result, breakdown: { streams, expenses: exp.rows, inputs } };
+    return {
+      result,
+      breakdown: {
+        // Kept apart on purpose: if the same money were ever entered by hand
+        // as well as settled through the app, it shows up as two lines rather
+        // than silently doubling the total.
+        automatic: autoStreams,
+        manual: manualStreams,
+        expenses: exp.rows,
+        inputs,
+      },
+    };
   };
 
   router.get('/gross-profit/draft', handle(async (req: any, res: any) => {
@@ -173,7 +212,7 @@ export function createFinanceV2Router(pool: Pool) {
           + `and is recorded as a new version -- the original stays visible.`);
       }
 
-      const { result, breakdown } = await draftFor(month);
+      const { result, breakdown } = await draftFor(month, client);
 
       const version = existing.rows.length > 0
         ? Number(existing.rows[0].version) + 1 : 1;

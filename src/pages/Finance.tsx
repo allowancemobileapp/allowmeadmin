@@ -693,14 +693,28 @@ function RecordTab({ post, get, onDone }: any) {
 
           {kind === 'revenue' && (
             <>
+              <Note tone="amber" title="Only for money that did NOT go through the app.">
+                Membership, gist adverts, event tickets, premium groups, store
+                subscriptions and delivery commission are counted
+                automatically from your payment tables. Re-typing one here
+                counts it twice and overstates gross profit, which overpays.
+                Use this for an offline sponsorship or a direct bank transfer.
+              </Note>
               <Field label="Stream">
                 <select className={inputCls} value={form.stream || 'other'}
                         onChange={(e) => setForm({ ...form, stream: e.target.value })}>
+                  <option value="sponsorship">Sponsorship</option>
                   <option value="marketplace_commission">Marketplace commission</option>
-                  <option value="plus_subscriptions">Plus subscriptions</option>
-                  <option value="premium_groups">Premium groups</option>
                   <option value="fantasy">Allowance Fantasy</option>
                   <option value="other">Other</option>
+                  <optgroup label="Off-platform only — these are auto-counted">
+                    <option value="plus_subscriptions">Membership / Plus</option>
+                    <option value="event_tickets">Event tickets</option>
+                    <option value="gist_adverts">Gist adverts</option>
+                    <option value="premium_groups">Premium groups</option>
+                    <option value="store_subscriptions">Store subscriptions</option>
+                    <option value="delivery_commission">Delivery commission</option>
+                  </optgroup>
                 </select>
               </Field>
               <div className="grid grid-cols-3 gap-3">

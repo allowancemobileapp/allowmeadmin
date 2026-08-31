@@ -1833,44 +1833,67 @@ function createFinanceV2Router(pool2) {
     }
     await fn(req, res);
   });
-  const draftFor = async (month) => {
-    const [rev, exp] = await Promise.all([
-      pool2.query(`
-        SELECT stream,
-               COALESCE(SUM(gross_collected),0) AS gross,
-               COALESCE(SUM(gateway_fee),0)     AS gateway,
-               COALESCE(SUM(seller_payout),0)   AS seller,
-               COALESCE(SUM(direct_cost),0)     AS direct
-        FROM revenue_entries
-        WHERE date_trunc('month', collected_on) = date_trunc('month', $1::date)
-        GROUP BY stream`, [month]),
-      pool2.query(`
-        SELECT category, COALESCE(SUM(amount),0)::bigint AS amount
-        FROM company_expenses
-        WHERE date_trunc('month', expense_date) = date_trunc('month', $1::date)
-        GROUP BY category`, [month])
-    ]);
-    const streams = rev.rows.map((r) => ({
+  const draftFor = async (month, client) => {
+    const q = (text, params = []) => (client ?? pool2).query(text, params);
+    const auto = await q(
+      "SELECT * FROM month_collections_kobo($1::date)",
+      [month]
+    );
+    const rev = await q(`
+      SELECT stream,
+             COALESCE(SUM(gross_collected),0) AS gross,
+             COALESCE(SUM(gateway_fee),0)     AS gateway,
+             COALESCE(SUM(seller_payout),0)   AS seller,
+             COALESCE(SUM(direct_cost),0)     AS direct
+      FROM revenue_entries
+      WHERE date_trunc('month', collected_on) = date_trunc('month', $1::date)
+      GROUP BY stream`, [month]);
+    const exp = await q(`
+      SELECT category, COALESCE(SUM(amount),0) AS amount
+      FROM company_expenses
+      WHERE date_trunc('month', expense_date) = date_trunc('month', $1::date)
+      GROUP BY category`, [month]);
+    const autoStreams = auto.rows.map((r) => ({
       stream: r.stream,
-      gross: Number(r.gross),
+      slug: r.slug,
+      collected: Number(r.collected_kobo),
+      payments: Number(r.payments),
+      source: "automatic"
+    }));
+    const manualStreams = rev.rows.map((r) => ({
+      stream: r.stream,
+      slug: r.stream,
+      collected: Number(r.gross),
       gateway: Number(r.gateway),
       seller: Number(r.seller),
-      direct: Number(r.direct)
+      direct: Number(r.direct),
+      source: "manual"
     }));
-    const sum = (k) => streams.reduce((a, s) => a + s[k], 0);
+    const sumBy = (rows, k) => rows.reduce((a, x) => a + Number(x[k] || 0), 0);
     const expenseBucket = (cat) => Math.round(Number(exp.rows.find((r) => r.category === cat)?.amount || 0) * 100);
     const inputs = {
-      collections: sum("gross"),
-      // Fees can be recorded per transaction OR as an expense line. Both are
-      // counted, because a company will do one or the other and losing either
-      // would overstate gross profit and overpay.
-      gatewayFees: sum("gateway") + expenseBucket("payment_processing"),
-      sellerPayouts: sum("seller") + expenseBucket("seller_payouts"),
-      directInfrastructure: sum("direct") + expenseBucket("infrastructure"),
+      collections: sumBy(autoStreams, "collected") + sumBy(manualStreams, "collected"),
+      // A fee can be recorded per transaction OR as an expense line. Both are
+      // counted, because a company will do one or the other, and missing
+      // either would overstate gross profit and overpay.
+      gatewayFees: sumBy(manualStreams, "gateway") + expenseBucket("payment_processing"),
+      sellerPayouts: sumBy(manualStreams, "seller") + expenseBucket("seller_payouts"),
+      directInfrastructure: sumBy(manualStreams, "direct") + expenseBucket("infrastructure"),
       refunds: expenseBucket("refunds")
     };
     const result = computeGrossProfit(inputs);
-    return { result, breakdown: { streams, expenses: exp.rows, inputs } };
+    return {
+      result,
+      breakdown: {
+        // Kept apart on purpose: if the same money were ever entered by hand
+        // as well as settled through the app, it shows up as two lines rather
+        // than silently doubling the total.
+        automatic: autoStreams,
+        manual: manualStreams,
+        expenses: exp.rows,
+        inputs
+      }
+    };
   };
   router.get("/gross-profit/draft", handle(async (req, res) => {
     const month = String(req.query.month || (/* @__PURE__ */ new Date()).toISOString().slice(0, 7)) + "-01";
@@ -1907,7 +1930,7 @@ function createFinanceV2Router(pool2) {
           `${month.slice(0, 7)} is already certified. A correction needs a reason, and is recorded as a new version -- the original stays visible.`
         );
       }
-      const { result, breakdown } = await draftFor(month);
+      const { result, breakdown } = await draftFor(month, client);
       const version = existing.rows.length > 0 ? Number(existing.rows[0].version) + 1 : 1;
       if (existing.rows.length > 0) {
         await client.query(
