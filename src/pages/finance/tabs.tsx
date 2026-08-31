@@ -363,7 +363,7 @@ const CHALLENGE_TONE: Record<string, string> = {
   expired: 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-400',
 };
 
-export function MilestonesTab({ get, post, role }: any) {
+export function MilestonesTab({ get, post, put, role }: any) {
   const [awards, setAwards] = useState<any[]>([]);
   const [table, setTable] = useState<any>(null);
   const [mode, setMode] = useState<'current' | 'if_all_vest' | 'scenario'>('current');
@@ -495,7 +495,7 @@ export function MilestonesTab({ get, post, role }: any) {
 
       <div className="space-y-4">
         {awards.map((a) => (
-          <AwardCard key={a.scheme.id} award={a} get={get} post={post}
+          <AwardCard key={a.scheme.id} award={a} get={get} post={post} put={put}
                      role={role} onChange={load} />
         ))}
       </div>
@@ -503,7 +503,7 @@ export function MilestonesTab({ get, post, role }: any) {
   );
 }
 
-function AwardCard({ award, post, role, onChange }: any) {
+function AwardCard({ award, post, put, role, onChange }: any) {
   const { scheme, now, atLongstop, daysToLongstop } = award;
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ description: '', acceptance_criteria: '',
@@ -667,33 +667,92 @@ function AwardCard({ award, post, role, onChange }: any) {
             director other than the founder.
           </div>
           {scheme.tranches.map((t: any) => (
-            <div key={t.id}
-                 className="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50">
-              <Target className="w-4 h-4 text-slate-400 shrink-0" />
-              <div className="flex-1 min-w-[180px]">
-                <p className="text-sm text-slate-800 dark:text-slate-200">
-                  Tranche {t.index} · {shares(t.shares)} Class A
-                </p>
-                <p className="text-xs text-slate-500">
-                  {t.milestoneDescription || 'No milestone recorded yet'}
-                </p>
-              </div>
-              {t.certifiedBy ? (
-                <span className="text-xs font-bold text-emerald-600">
-                  Certified by {t.certifiedBy}
-                </span>
-              ) : role === 'director' ? (
-                <button onClick={() => certify(t.id)} className={btnGhost}>
-                  Certify
-                </button>
-              ) : (
-                <span className="text-xs text-slate-400">Awaiting a director</span>
-              )}
-            </div>
+            <TrancheRow key={t.id} tranche={t} role={role} put={put}
+                        certify={certify} onChange={onChange} />
           ))}
         </div>
       )}
     </Card>
+  );
+}
+
+function TrancheRow({ tranche: t, role, put, certify, onChange }: any) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(t.milestoneDescription || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // The Articles fix this date. After it the server refuses the write and a
+  // database trigger refuses it again, so the UI stops offering the field
+  // rather than letting somebody type a milestone out and lose it on save.
+  const locked = new Date() > new Date('2026-09-30T23:59:59.999Z');
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await put(`/api/finance/tranches/${t.id}`, { milestone_description: text });
+      setEditing(false);
+      onChange();
+    } catch (e: any) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+      <div className="flex flex-wrap items-center gap-3">
+        <Target className="w-4 h-4 text-slate-400 shrink-0" />
+        <div className="flex-1 min-w-[180px]">
+          <p className="text-sm text-slate-800 dark:text-slate-200">
+            Tranche {t.index} · {shares(t.shares)} Class A
+          </p>
+          {!editing && (
+            <p className={`text-xs ${t.milestoneDescription
+              ? 'text-slate-500' : 'text-amber-600 dark:text-amber-500 font-medium'}`}>
+              {t.milestoneDescription
+                || (locked
+                    ? 'No milestone was recorded before the deadline — this tranche cannot be earned'
+                    : 'No milestone recorded yet')}
+            </p>
+          )}
+        </div>
+
+        {t.certifiedBy ? (
+          <span className="text-xs font-bold text-emerald-600">
+            Certified by {t.certifiedBy}
+          </span>
+        ) : (
+          <div className="flex items-center gap-2">
+            {role === 'founder' && !locked && !editing && (
+              <button onClick={() => setEditing(true)} className={btnGhost}>
+                {t.milestoneDescription ? 'Edit' : 'Record milestone'}
+              </button>
+            )}
+            {role === 'director' && t.milestoneDescription && (
+              <button onClick={() => certify(t.id)} className={btnGhost}>Certify</button>
+            )}
+            {role !== 'director' && (
+              <span className="text-xs text-slate-400">Awaiting a director</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {editing && (
+        <div className="mt-3 space-y-2">
+          <textarea className={inputCls} rows={2} value={text} autoFocus
+                    placeholder="What has to happen for this tranche to be earned?"
+                    onChange={(e) => setText(e.target.value)} />
+          {err && <p className="text-xs text-rose-600">{err}</p>}
+          <div className="flex gap-2">
+            <button onClick={save} disabled={busy || !text.trim()} className={btnCls}>
+              {busy ? 'Saving…' : 'Save milestone'}
+            </button>
+            <button onClick={() => { setEditing(false); setText(t.milestoneDescription || ''); }}
+                    className={btnGhost}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

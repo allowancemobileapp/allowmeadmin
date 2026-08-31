@@ -55,7 +55,7 @@ const STREAM_COLOURS = [
 ];
 
 export default function Finance() {
-  const { get, post } = useApi();
+  const { get, post, put } = useApi();
 
   const [tab, setTab] = useState('overview');
   const [period, setPeriod] = useState('month');
@@ -207,7 +207,7 @@ export default function Finance() {
               </ReauthGate>
             )}
             {tab === 'captable'    && <CapTableView data={capTable} />}
-            {tab === 'milestones'  && <MilestonesTab get={get} post={post} role={role} />}
+            {tab === 'milestones'  && <MilestonesTab get={get} post={post} put={put} role={role} />}
             {tab === 'round'       && <RoundModelling data={capTable} post={post} />}
             {tab === 'mystake'     && <StakeholderTab get={get} />}
             {tab === 'record'      && <RecordTab post={post} get={get} onDone={load} />}
