@@ -91,13 +91,15 @@ export function createLiveRouter(pool: Pool) {
 
       // What campus partners are owed comes off the top. It is not
       // shareholder money and must not appear inside anyone's share.
+      // Through partner_earned, so each agreement is measured over the
+      // OVERLAP of this window and its own life. The previous version filtered
+      // by date and then multiplied by the whole window's company share, which
+      // credited an agreement for money that arrived before it started.
       const campus = await client.query(`
-        SELECT COALESCE(SUM(se.company_share * ss.percent / 100.0), 0) AS owed
+        SELECT COALESCE(SUM(pe.earned), 0) AS owed
         FROM school_stakeholders ss
-        JOIN school_earnings($1::date, $2::date) se ON se.school_id = ss.school_id
-        WHERE ss.active
-          AND ss.starts_on <= $2::date
-          AND (ss.ends_on IS NULL OR ss.ends_on >= $1::date)`, [from, to]);
+        LEFT JOIN LATERAL partner_earned(ss.id, $1::date, $2::date) pe ON true
+        WHERE ss.active`, [from, to]);
 
       const t = totals.rows[0];
       const income = Number(t.income || 0);
@@ -147,12 +149,28 @@ export function createLiveRouter(pool: Pool) {
     try {
       const rows = await client.query(
         'SELECT * FROM school_earnings($1::date, $2::date)', [from, to]);
+
+      // Each agreement's own state, earnings and outstanding balance, from
+      // the database. The old version multiplied percent by the whole
+      // window's company share in JavaScript, which ignored starts_on and
+      // ends_on entirely -- a future agreement showed a balance and a lapsed
+      // one kept earning.
       const partners = await client.query(`
-        SELECT ss.*, sh.full_name AS person_name, s.name AS school_name
+        SELECT ss.*,
+               sh.full_name AS person_name,
+               s.name AS school_name,
+               partner_status(ss.active, ss.starts_on, ss.ends_on) AS status,
+               COALESCE(pe.earned, 0)      AS earned_this_period,
+               COALESCE(pb.earned_total, 0) AS earned_total,
+               COALESCE(pb.paid_total, 0)   AS paid_total,
+               COALESCE(pb.outstanding, 0)  AS outstanding,
+               pb.last_paid_on
         FROM school_stakeholders ss
         LEFT JOIN shareholders sh ON sh.id = ss.person_id
         LEFT JOIN schools s ON s.id = ss.school_id
-        ORDER BY ss.active DESC, ss.created_at DESC`);
+        LEFT JOIN LATERAL partner_earned(ss.id, $1::date, $2::date) pe ON true
+        LEFT JOIN LATERAL partner_balance(ss.id) pb ON true
+        ORDER BY ss.active DESC, ss.created_at DESC`, [from, to]);
 
       const byId = new Map<string, any[]>();
       for (const p of partners.rows) {
@@ -161,8 +179,10 @@ export function createLiveRouter(pool: Pool) {
         byId.get(k)!.push({
           ...p,
           percent: Number(p.percent),
-          // A tenure that has run out is not a live obligation.
-          expired: !!p.ends_on && new Date(p.ends_on) < new Date(),
+          earned_this_period: Number(p.earned_this_period),
+          earned_total: Number(p.earned_total),
+          paid_total: Number(p.paid_total),
+          outstanding: Number(p.outstanding),
         });
       }
 
@@ -171,8 +191,9 @@ export function createLiveRouter(pool: Pool) {
         schools: rows.rows.map((r) => {
           const share = byId.get(String(r.school_id)) || [];
           const companyShare = Number(r.company_share || 0);
-          const live = share.filter((p) => p.active && !p.expired);
-          const owed = live.reduce((a, p) => a + companyShare * p.percent / 100, 0);
+          // Only what each agreement ACTUALLY earned in this window, which is
+          // zero for one that had not started or had already finished.
+          const owed = share.reduce((a, p) => a + p.earned_this_period, 0);
           return {
             school_id: r.school_id,
             school_name: r.school_name,
@@ -182,6 +203,7 @@ export function createLiveRouter(pool: Pool) {
             partners: share,
             owed_to_partners: owed,
             company_keeps: companyShare - owed,
+            outstanding: share.reduce((a, p) => a + p.outstanding, 0),
           };
         }),
         unassigned_partners: partners.rows
@@ -191,6 +213,83 @@ export function createLiveRouter(pool: Pool) {
     } finally {
       client.release();
     }
+  }));
+
+  /** Every payment behind a campus total. The evidence for the figure. */
+  router.get('/schools/:id/breakdown', handle(async (req: any, res: any) => {
+    const { from, to, label } = range(req.query);
+    const id = req.params.id === 'null' ? null : Number(req.params.id);
+    const r = await pool.query(
+      'SELECT * FROM school_payment_breakdown($1::bigint, $2::date, $3::date)',
+      [id, from, to]);
+    res.json({
+      period: { from, to, label },
+      payments: r.rows.map((x) => ({
+        ...x,
+        amount: Number(x.amount),
+        company_share: Number(x.company_share),
+      })),
+    });
+  }));
+
+  /** What has been paid to one partner. */
+  router.get('/schools/partners/:id/payouts', handle(async (req: any, res: any) => {
+    const [bal, rows] = await Promise.all([
+      pool.query('SELECT * FROM partner_balance($1)', [req.params.id]),
+      pool.query(
+        `SELECT * FROM school_partner_payouts
+         WHERE agreement_id = $1 ORDER BY paid_on DESC`, [req.params.id]),
+    ]);
+    res.json({
+      balance: bal.rows[0] || null,
+      payouts: rows.rows.map((p) => ({
+        ...p,
+        amount: Number(p.amount),
+        campus_share: Number(p.campus_share),
+        percent: Number(p.percent),
+      })),
+    });
+  }));
+
+  /**
+   * Mark a payout as made.
+   *
+   * ALSO WRITES A DEDUCTIBLE EXPENSE. Clause 7.1(b) treats a third party's
+   * share of transaction proceeds as a deduction from Monthly Gross Profit,
+   * so paying a campus partner reduces gross profit and can reduce salaries.
+   * Done in one database transaction so the two can never disagree.
+   */
+  router.post('/schools/partners/:id/pay', founderOnly(async (req: any, res: any) => {
+    const { period_from, period_to, amount, method, reference, note } = req.body;
+    if (!(Number(amount) >= 0)) throw new Error('Enter the amount paid.');
+    if (!period_from || !period_to) {
+      throw new Error('Say which period this payment covers.');
+    }
+    const r = await pool.query(
+      `SELECT record_partner_payout($1,$2::date,$3::date,$4::numeric,$5,$6,$7,$8) AS id`,
+      [req.params.id, period_from, period_to, Number(amount),
+       method || null, reference || null, note || null, req.adminEmail]);
+    res.status(201).json({ id: r.rows[0].id });
+  }));
+
+  router.post('/schools/partners/:id/renew', founderOnly(async (req: any, res: any) => {
+    const { ends_on, percent } = req.body;
+    if (!ends_on) throw new Error('Choose a new end date.');
+    await pool.query(
+      'SELECT renew_partner_agreement($1,$2::date,$3::numeric,$4)',
+      [req.params.id, ends_on,
+       percent === undefined || percent === null ? null : Number(percent),
+       req.adminEmail]);
+    res.json({ ok: true });
+  }));
+
+  router.post('/schools/partners/:id/restore', founderOnly(async (req: any, res: any) => {
+    const r = await pool.query(
+      'SELECT restore_partner_agreement($1,$2) AS status',
+      [req.params.id, req.adminEmail]);
+    // Says what it came back AS: restoring something whose end date has
+    // already passed brings back a lapsed agreement, not a live one.
+    res.json({ ok: true, status: r.rows[0].status });
   }));
 
   router.post('/schools/partners', founderOnly(async (req: any, res: any) => {

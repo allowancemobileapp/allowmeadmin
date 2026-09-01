@@ -49,7 +49,7 @@ export function Stat({ label, value, sub, tone = 'slate', icon: Icon }: any) {
         <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">{label}</p>
         {Icon && <Icon className="w-4 h-4 text-slate-400 shrink-0" />}
       </div>
-      <p className={`text-2xl font-mono font-bold mt-2 ${tones[tone]}`}>{value}</p>
+      <p className={`text-2xl font-mono font-bold mt-2 ${tones[tone] || tones.slate}`}>{value}</p>
       {sub && <p className="text-xs text-slate-500 mt-1">{sub}</p>}
     </Card>
   );
@@ -119,6 +119,16 @@ export function BandPill({ band }: { band: number }) {
  * when it was set. Section 8: there is no share price, and an unlabelled
  * number reads as a valuation the company has never had.
  */
+// The basis is stored as a slug and was being printed raw -- "Based on:
+// founder_estimate". These are the words a person would use.
+const BASIS_LABELS: Record<string, string> = {
+  par_value: 'Par value — what was paid in, not a market price',
+  founder_estimate: "The founder's own estimate",
+  last_round: 'The price set at the last funding round',
+  independent_valuation: 'An independent valuation',
+  book_value: 'Book value',
+};
+
 export function BasisFigure({ label, amount, basis, asOf, movesWhen, negativeOk }: any) {
   const negative = amount < 0;
   return (
@@ -131,7 +141,7 @@ export function BasisFigure({ label, amount, basis, asOf, movesWhen, negativeOk 
       </p>
       <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-0.5">
         <p className="text-[11px] text-slate-500">
-          <span className="font-bold">Based on:</span> {basis}
+          <span className="font-bold">Based on:</span> {BASIS_LABELS[basis] || basis}
         </p>
         {asOf && (
           <p className="text-[11px] text-slate-500">

@@ -2,7 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Card, Stat, Field, Empty, Note, Th, Td, inputCls, btnCls, btnGhost,
 } from './ui';
-import { School, Plus, TrendingUp, Users, AlertTriangle } from 'lucide-react';
+import { School, Plus, TrendingUp, Users, AlertTriangle, Receipt,
+         RotateCcw, Undo2, ListTree } from 'lucide-react';
+import {
+  StatusPill, PayPartnerModal, RenewModal, BreakdownModal, PayoutHistory,
+} from './CampusPartner';
 
 const naira = (n: number) =>
   '₦' + Math.round(Number(n) || 0).toLocaleString('en-NG');
@@ -33,6 +37,10 @@ export function SchoolsTab({ get, post, put, del, period, role }: any) {
   const [people, setPeople] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [paying, setPaying] = useState<any>(null);
+  const [renewing, setRenewing] = useState<any>(null);
+  const [breakdown, setBreakdown] = useState<any>(null);
+  const [openHistory, setOpenHistory] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -76,7 +84,7 @@ export function SchoolsTab({ get, post, put, del, period, role }: any) {
               value={data.schools.filter((s: any) => s.school_id).length}
               sub={data.period.label} />
         <Stat label="Collected" value={naira(totalCollected)} icon={TrendingUp}
-              tone="emerald" />
+              tone="green" />
         <Stat label="Owed to partners" value={naira(totalOwed)} icon={Users}
               tone="amber" sub="off the top, before any shareholder split" />
       </div>
@@ -104,6 +112,21 @@ export function SchoolsTab({ get, post, put, del, period, role }: any) {
                     onDone={() => { setAdding(false); load(); }} />
       )}
 
+      {paying && (
+        <PayPartnerModal partner={paying} period={data.period} post={post}
+                         onClose={() => setPaying(null)}
+                         onDone={() => { setPaying(null); load(); }} />
+      )}
+      {renewing && (
+        <RenewModal partner={renewing} post={post}
+                    onClose={() => setRenewing(null)}
+                    onDone={() => { setRenewing(null); load(); }} />
+      )}
+      {breakdown && (
+        <BreakdownModal school={breakdown} period={data.period} get={get}
+                        onClose={() => setBreakdown(null)} />
+      )}
+
       {data.schools.length === 0 ? (
         <Empty>No campus income recorded in this period.</Empty>
       ) : data.schools.map((s: any) => (
@@ -127,6 +150,11 @@ export function SchoolsTab({ get, post, put, del, period, role }: any) {
                 {s.owed_to_partners > 0 &&
                   ` · ${naira(s.owed_to_partners)} to partners`}
               </p>
+              <button onClick={() => setBreakdown(s)}
+                      className={btnGhost + ' mt-2'}>
+                <ListTree className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5" />
+                Every payment
+              </button>
             </div>
           </div>
 
@@ -147,10 +175,9 @@ export function SchoolsTab({ get, post, put, del, period, role }: any) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {s.partners.map((p: any) => {
-                  const live = p.active && !p.expired;
-                  return (
-                    <tr key={p.id} className={live ? '' : 'opacity-50'}>
+                {s.partners.map((p: any) => (
+                  <React.Fragment key={p.id}>
+                    <tr className={p.status === 'active' ? '' : 'opacity-60'}>
                       <Td>
                         <p className="text-sm text-slate-800 dark:text-slate-200">
                           {p.person_name || p.body_name}
@@ -158,23 +185,33 @@ export function SchoolsTab({ get, post, put, del, period, role }: any) {
                         {p.contact && (
                           <p className="text-xs text-slate-500">{p.contact}</p>
                         )}
+                        <div className="mt-1">
+                          <StatusPill status={p.status} endsOn={p.ends_on} />
+                        </div>
                       </Td>
                       <Td className="text-xs text-slate-500">
                         {KINDS.find((k) => k.id === p.kind)?.label || p.kind}
                       </Td>
                       <Td right mono>{p.percent}%</Td>
                       <Td right mono bold>
-                        {live ? naira(s.company_share * p.percent / 100)
-                              : <span className="text-slate-400">—</span>}
+                        {/* What this agreement ACTUALLY earned in the window,
+                            scoped to its own start and end dates. A pending
+                            one earns nothing, which is what a start date is
+                            for. */}
+                        {p.earned_this_period > 0
+                          ? naira(p.earned_this_period)
+                          : <span className="text-slate-400">—</span>}
+                        {p.outstanding > 0 && (
+                          <span className="block text-[10px] font-normal text-amber-600">
+                            {naira(p.outstanding)} owed
+                          </span>
+                        )}
                       </Td>
                       <Td>
-                        {p.expired ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-600">
-                            <AlertTriangle className="w-3 h-3" /> lapsed{' '}
-                            {new Date(p.ends_on).toLocaleDateString('en-NG')}
+                        {p.status === 'pending' ? (
+                          <span className="text-xs text-sky-600">
+                            starts {new Date(p.starts_on).toLocaleDateString('en-NG')}
                           </span>
-                        ) : !p.active ? (
-                          <span className="text-xs text-slate-400">ended</span>
                         ) : p.ends_on ? (
                           <span className="text-xs text-slate-600 dark:text-slate-400">
                             {new Date(p.ends_on).toLocaleDateString('en-NG')}
@@ -187,20 +224,68 @@ export function SchoolsTab({ get, post, put, del, period, role }: any) {
                       </Td>
                       {isFounder && (
                         <Td right>
-                          {live && (
+                          <div className="flex items-center justify-end gap-1 flex-wrap">
                             <button className={btnGhost}
-                              onClick={async () => {
-                                await del(`/api/live/schools/partners/${p.id}`);
-                                load();
-                              }}>
-                              End it
+                                    onClick={() => setOpenHistory(
+                                      openHistory === p.id ? null : p.id)}>
+                              <Receipt className="w-3.5 h-3.5" />
                             </button>
-                          )}
+
+                            {(p.outstanding > 0 || p.earned_this_period > 0) && (
+                              <button className={btnCls} onClick={() => setPaying(p)}>
+                                Paid
+                              </button>
+                            )}
+
+                            {/* Ran out, or ended by hand. Renew extends the
+                                same agreement so its payout history stays
+                                attached; restore only switches it back on. */}
+                            {(p.status === 'lapsed' || p.status === 'ended') && (
+                              <button className={btnGhost}
+                                      onClick={() => setRenewing(p)}>
+                                <RotateCcw className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
+                                Renew
+                              </button>
+                            )}
+
+                            {p.status === 'ended' ? (
+                              <button className={btnGhost}
+                                onClick={async () => {
+                                  const r = await post(
+                                    `/api/live/schools/partners/${p.id}/restore`, {});
+                                  if (r?.status === 'lapsed') {
+                                    alert('Restored — but its end date has already '
+                                          + 'passed, so it still earns nothing. '
+                                          + 'Renew it to set a new one.');
+                                  }
+                                  load();
+                                }}>
+                                <Undo2 className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
+                                Restore
+                              </button>
+                            ) : (
+                              <button className={btnGhost}
+                                onClick={async () => {
+                                  await del(`/api/live/schools/partners/${p.id}`);
+                                  load();
+                                }}>
+                                End it
+                              </button>
+                            )}
+                          </div>
                         </Td>
                       )}
                     </tr>
-                  );
-                })}
+                    {openHistory === p.id && (
+                      <tr>
+                        <td colSpan={isFounder ? 6 : 5}
+                            className="bg-slate-50 dark:bg-slate-800/30">
+                          <PayoutHistory partner={p} get={get} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
               </tbody>
             </table>
           )}

@@ -64,7 +64,7 @@ export function LiveSplitTab({ get, period, role }: any) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat label="Money in" value={naira(t.income)} icon={TrendingUp}
-              tone="emerald" sub={`${t.payments} payments · ${data.period.label}`} />
+              tone="green" sub={`${t.payments} payments · ${data.period.label}`} />
         <Stat label="Money out" value={naira(t.spend)} icon={Wallet} />
         <Stat label={loss ? 'Lost' : 'Kept'} value={naira(Math.abs(t.retained))}
               icon={Coins} tone={loss ? 'rose' : 'indigo'}

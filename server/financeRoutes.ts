@@ -600,6 +600,94 @@ export function createFinanceRouter(pool: Pool) {
     res.status(201).json(r.rows[0]);
   }));
 
+  // ---- The share price ---------------------------------------------------
+  //
+  // A company valuation is not the thing anybody agrees. A PRICE PER SHARE is
+  // -- "N10 a share" -- and the valuation falls out of it. These two routes
+  // let the price be set directly and derive the valuation from the register,
+  // which is the direction the arithmetic actually runs. 0088 exists because
+  // it was being done the other way round and a valuation two zeroes short
+  // put every stake at a hundredth of its value.
+
+  router.get('/share-price', handleReq(async (_req: any, res: any) => {
+    const [now, history, par] = await Promise.all([
+      pool.query(`SELECT public.shares_issued()      AS shares_issued,
+                         public.current_share_price() AS price_per_share`),
+      pool.query(`SELECT id, valued_on, company_value, shares_then,
+                         price_per_share, basis, note, created_by
+                    FROM public.share_price_history LIMIT 24`),
+      pool.query(`SELECT MAX(nominal_value) AS par FROM public.share_classes`),
+    ]);
+
+    const sharesIssued = Number(now.rows[0]?.shares_issued || 0);
+    const price = now.rows[0]?.price_per_share;
+    const parValue = Number(par.rows[0]?.par || 0);
+
+    res.json({
+      shares_issued: sharesIssued,
+      price_per_share: price === null || price === undefined ? null : Number(price),
+      company_value: price ? Number(price) * sharesIssued : 0,
+      par_value: parValue,
+      // What the register says was paid in, so the page can say plainly
+      // whether the price on screen is above or below it.
+      share_capital: parValue * sharesIssued,
+      history: history.rows.map((h: any) => ({
+        id: h.id,
+        valued_on: h.valued_on,
+        company_value: Number(h.company_value),
+        shares_then: Number(h.shares_then),
+        price_per_share: h.price_per_share === null ? null : Number(h.price_per_share),
+        basis: h.basis,
+        note: h.note,
+        created_by: h.created_by,
+      })),
+    });
+  }));
+
+  router.post('/share-price', handleReq(async (req: any, res: any) => {
+    const { price_per_share, basis, valued_on, note } = req.body;
+    const price = Number(price_per_share);
+
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ error: 'A share price has to be a positive number.' });
+    }
+
+    try {
+      const r = await pool.query(
+        `SELECT * FROM public.set_share_price($1, $2, $3, $4, $5)`,
+        [price, basis || 'founder_estimate', valued_on || new Date(),
+         note || null, req.adminEmail]);
+
+      await logAdminAction(req, 'finance.share_price.set',
+        { price_per_share: price, basis, amount: r.rows[0]?.amount });
+
+      const shares = await pool.query(
+        `SELECT public.shares_issued($1::date) AS n`, [r.rows[0].valued_on]);
+
+      return res.status(201).json({
+        ...r.rows[0],
+        amount: Number(r.rows[0].amount),
+        price_per_share: price,
+        shares_issued: Number(shares.rows[0]?.n || 0),
+      });
+    } catch (e: any) {
+      // set_share_price refuses a price below par, and refuses to price a
+      // company with no shares issued. Those are answers, not server faults,
+      // so they come back as 400 with the wording the function chose rather
+      // than as a 500 the page has to guess at.
+      if (e.code === 'P0001' || e.code === '23514') {
+        return res.status(400).json({ error: e.message });
+      }
+      if (e.code === '42883') {
+        return res.status(400).json({
+          error: 'set_share_price does not exist yet. Run '
+               + 'migrations/0089_share_price.sql.',
+        });
+      }
+      throw e;
+    }
+  }));
+
   // ---- SAFEs, entirely optional ----------------------------------------
 
   router.get('/safes', handleReq(async (_req: any, res: any) => {
@@ -709,6 +797,48 @@ export function createFinanceRouter(pool: Pool) {
     const r = raise / postMoney;
     const poolFrac = poolPct / 100;
 
+    // THE ROUND HAS TO FIT INSIDE 100% OF THE COMPANY.
+    //
+    // On a pre-money pool the existing holders keep their share COUNT and the
+    // investor plus the pool take their percentages out of the final table, so
+    // the maths divides by (1 - pool - r). Raising N520m at N10m pre-money
+    // makes r = 0.981; add a 2% pool and that denominator goes NEGATIVE.
+    //
+    // The Math.max(0, ...) below was meant to guard that and instead made it
+    // worse: a negative share count became zero, so the round applied nothing
+    // and the screen reported a N520m raise with 0% dilution and a share price
+    // of Infinity. A wrong answer that looks plausible is the worst kind.
+    //
+    // Refused with the arithmetic shown, because the fix is a judgement about
+    // the deal -- raise less, or value the company higher -- and not something
+    // to guess at.
+    const investorPct = r * 100;
+    if (poolPreMoney && (r + poolFrac) >= 1) {
+      return res.status(400).json({
+        error:
+          `That round cannot exist. At a pre-money valuation of ` +
+          `N${preMoney.toLocaleString('en-NG')} a raise of ` +
+          `N${raise.toLocaleString('en-NG')} already buys ` +
+          `${investorPct.toFixed(1)}% of the company, and a ${poolPct}% pool ` +
+          `carved out before the round needs ${((r + poolFrac) * 100).toFixed(1)}% ` +
+          `in total. Raise less, put the valuation higher, or move the pool to ` +
+          `after the round.`,
+      });
+    }
+    if (r >= 1) {
+      return res.status(400).json({
+        error:
+          `A raise of N${raise.toLocaleString('en-NG')} against a pre-money of ` +
+          `N${preMoney.toLocaleString('en-NG')} would sell more than the whole ` +
+          `company. The investor would own ${investorPct.toFixed(1)}%.`,
+      });
+    }
+    // Not refused, but worth saying out loud before it is signed.
+    const controlWarning = investorPct > 50
+      ? `This sells ${investorPct.toFixed(1)}% of the company. Above 50% the ` +
+        `investor controls an ordinary resolution.`
+      : null;
+
     let poolShares = 0;
     let investorShares = 0;
     let finalTotal = 0;
@@ -737,7 +867,11 @@ export function createFinanceRouter(pool: Pool) {
     res.json({
       inputs: { raise, pre_money: preMoney, post_money: postMoney,
                 pool_pct: poolPct, pool_pre_money: poolPreMoney },
-      share_price: raise / investorShares,
+      // Guarded: investorShares is zero on a degenerate round, and
+      // Infinity renders as N0.00 -- which is what made the bug above
+      // look like a display problem rather than an arithmetic one.
+      share_price: investorShares > 0 ? raise / investorShares : 0,
+      control_warning: controlWarning,
       shares: {
         before: startingShares,
         from_safes: safeShares,
@@ -750,11 +884,12 @@ export function createFinanceRouter(pool: Pool) {
         name: h.name,
         share_class: h.share_class,
         shares: h.after,
-        before_pct: (h.before / startingShares) * 100,
-        after_pct: (h.after / finalTotal) * 100,
+        before_pct: startingShares > 0 ? (h.before / startingShares) * 100 : 0,
+        after_pct: finalTotal > 0 ? (h.after / finalTotal) * 100 : 0,
         dilution_pct:
-          (h.before / startingShares) * 100 - (h.after / finalTotal) * 100,
-        value_after: (h.after / finalTotal) * postMoney,
+          (startingShares > 0 ? (h.before / startingShares) * 100 : 0)
+          - (finalTotal > 0 ? (h.after / finalTotal) * 100 : 0),
+        value_after: finalTotal > 0 ? (h.after / finalTotal) * postMoney : 0,
       })),
       // Article 5 makes the Founder Permanent Chairman regardless, but the
       // 75% and 50% marks are where a shareholder vote stops being a

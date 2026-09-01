@@ -1197,6 +1197,82 @@ function createFinanceRouter(pool2) {
     await logAdminAction2(req, "finance.valuation.set", { amount });
     res.status(201).json(r.rows[0]);
   }));
+  router.get("/share-price", handleReq(async (_req, res) => {
+    const [now, history, par] = await Promise.all([
+      pool2.query(`SELECT public.shares_issued()      AS shares_issued,
+                         public.current_share_price() AS price_per_share`),
+      pool2.query(`SELECT id, valued_on, company_value, shares_then,
+                         price_per_share, basis, note, created_by
+                    FROM public.share_price_history LIMIT 24`),
+      pool2.query(`SELECT MAX(nominal_value) AS par FROM public.share_classes`)
+    ]);
+    const sharesIssued = Number(now.rows[0]?.shares_issued || 0);
+    const price = now.rows[0]?.price_per_share;
+    const parValue = Number(par.rows[0]?.par || 0);
+    res.json({
+      shares_issued: sharesIssued,
+      price_per_share: price === null || price === void 0 ? null : Number(price),
+      company_value: price ? Number(price) * sharesIssued : 0,
+      par_value: parValue,
+      // What the register says was paid in, so the page can say plainly
+      // whether the price on screen is above or below it.
+      share_capital: parValue * sharesIssued,
+      history: history.rows.map((h) => ({
+        id: h.id,
+        valued_on: h.valued_on,
+        company_value: Number(h.company_value),
+        shares_then: Number(h.shares_then),
+        price_per_share: h.price_per_share === null ? null : Number(h.price_per_share),
+        basis: h.basis,
+        note: h.note,
+        created_by: h.created_by
+      }))
+    });
+  }));
+  router.post("/share-price", handleReq(async (req, res) => {
+    const { price_per_share, basis, valued_on, note } = req.body;
+    const price = Number(price_per_share);
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ error: "A share price has to be a positive number." });
+    }
+    try {
+      const r = await pool2.query(
+        `SELECT * FROM public.set_share_price($1, $2, $3, $4, $5)`,
+        [
+          price,
+          basis || "founder_estimate",
+          valued_on || /* @__PURE__ */ new Date(),
+          note || null,
+          req.adminEmail
+        ]
+      );
+      await logAdminAction2(
+        req,
+        "finance.share_price.set",
+        { price_per_share: price, basis, amount: r.rows[0]?.amount }
+      );
+      const shares = await pool2.query(
+        `SELECT public.shares_issued($1::date) AS n`,
+        [r.rows[0].valued_on]
+      );
+      return res.status(201).json({
+        ...r.rows[0],
+        amount: Number(r.rows[0].amount),
+        price_per_share: price,
+        shares_issued: Number(shares.rows[0]?.n || 0)
+      });
+    } catch (e) {
+      if (e.code === "P0001" || e.code === "23514") {
+        return res.status(400).json({ error: e.message });
+      }
+      if (e.code === "42883") {
+        return res.status(400).json({
+          error: "set_share_price does not exist yet. Run migrations/0089_share_price.sql."
+        });
+      }
+      throw e;
+    }
+  }));
   router.get("/safes", handleReq(async (_req, res) => {
     const r = await pool2.query("SELECT * FROM safes ORDER BY signed_on DESC");
     res.json(r.rows);
@@ -1278,6 +1354,18 @@ function createFinanceRouter(pool2) {
     const afterSafes = startingShares + safeShares;
     const r = raise / postMoney;
     const poolFrac = poolPct / 100;
+    const investorPct = r * 100;
+    if (poolPreMoney && r + poolFrac >= 1) {
+      return res.status(400).json({
+        error: `That round cannot exist. At a pre-money valuation of N${preMoney.toLocaleString("en-NG")} a raise of N${raise.toLocaleString("en-NG")} already buys ${investorPct.toFixed(1)}% of the company, and a ${poolPct}% pool carved out before the round needs ${((r + poolFrac) * 100).toFixed(1)}% in total. Raise less, put the valuation higher, or move the pool to after the round.`
+      });
+    }
+    if (r >= 1) {
+      return res.status(400).json({
+        error: `A raise of N${raise.toLocaleString("en-NG")} against a pre-money of N${preMoney.toLocaleString("en-NG")} would sell more than the whole company. The investor would own ${investorPct.toFixed(1)}%.`
+      });
+    }
+    const controlWarning = investorPct > 50 ? `This sells ${investorPct.toFixed(1)}% of the company. Above 50% the investor controls an ordinary resolution.` : null;
     let poolShares = 0;
     let investorShares = 0;
     let finalTotal = 0;
@@ -1302,7 +1390,11 @@ function createFinanceRouter(pool2) {
         pool_pct: poolPct,
         pool_pre_money: poolPreMoney
       },
-      share_price: raise / investorShares,
+      // Guarded: investorShares is zero on a degenerate round, and
+      // Infinity renders as N0.00 -- which is what made the bug above
+      // look like a display problem rather than an arithmetic one.
+      share_price: investorShares > 0 ? raise / investorShares : 0,
+      control_warning: controlWarning,
       shares: {
         before: startingShares,
         from_safes: safeShares,
@@ -1315,10 +1407,10 @@ function createFinanceRouter(pool2) {
         name: h.name,
         share_class: h.share_class,
         shares: h.after,
-        before_pct: h.before / startingShares * 100,
-        after_pct: h.after / finalTotal * 100,
-        dilution_pct: h.before / startingShares * 100 - h.after / finalTotal * 100,
-        value_after: h.after / finalTotal * postMoney
+        before_pct: startingShares > 0 ? h.before / startingShares * 100 : 0,
+        after_pct: finalTotal > 0 ? h.after / finalTotal * 100 : 0,
+        dilution_pct: (startingShares > 0 ? h.before / startingShares * 100 : 0) - (finalTotal > 0 ? h.after / finalTotal * 100 : 0),
+        value_after: finalTotal > 0 ? h.after / finalTotal * postMoney : 0
       })),
       // Article 5 makes the Founder Permanent Chairman regardless, but the
       // 75% and 50% marks are where a shareholder vote stops being a
@@ -3308,12 +3400,10 @@ function createLiveRouter(pool2) {
         FROM company_income WHERE received_at::date BETWEEN $1 AND $2
         GROUP BY stream ORDER BY total DESC`, [from, to]);
       const campus = await client.query(`
-        SELECT COALESCE(SUM(se.company_share * ss.percent / 100.0), 0) AS owed
+        SELECT COALESCE(SUM(pe.earned), 0) AS owed
         FROM school_stakeholders ss
-        JOIN school_earnings($1::date, $2::date) se ON se.school_id = ss.school_id
-        WHERE ss.active
-          AND ss.starts_on <= $2::date
-          AND (ss.ends_on IS NULL OR ss.ends_on >= $1::date)`, [from, to]);
+        LEFT JOIN LATERAL partner_earned(ss.id, $1::date, $2::date) pe ON true
+        WHERE ss.active`, [from, to]);
       const t = totals.rows[0];
       const income = Number(t.income || 0);
       const spend = Number(t.spend || 0);
@@ -3361,11 +3451,21 @@ function createLiveRouter(pool2) {
         [from, to]
       );
       const partners = await client.query(`
-        SELECT ss.*, sh.full_name AS person_name, s.name AS school_name
+        SELECT ss.*,
+               sh.full_name AS person_name,
+               s.name AS school_name,
+               partner_status(ss.active, ss.starts_on, ss.ends_on) AS status,
+               COALESCE(pe.earned, 0)      AS earned_this_period,
+               COALESCE(pb.earned_total, 0) AS earned_total,
+               COALESCE(pb.paid_total, 0)   AS paid_total,
+               COALESCE(pb.outstanding, 0)  AS outstanding,
+               pb.last_paid_on
         FROM school_stakeholders ss
         LEFT JOIN shareholders sh ON sh.id = ss.person_id
         LEFT JOIN schools s ON s.id = ss.school_id
-        ORDER BY ss.active DESC, ss.created_at DESC`);
+        LEFT JOIN LATERAL partner_earned(ss.id, $1::date, $2::date) pe ON true
+        LEFT JOIN LATERAL partner_balance(ss.id) pb ON true
+        ORDER BY ss.active DESC, ss.created_at DESC`, [from, to]);
       const byId = /* @__PURE__ */ new Map();
       for (const p of partners.rows) {
         const k = String(p.school_id);
@@ -3373,8 +3473,10 @@ function createLiveRouter(pool2) {
         byId.get(k).push({
           ...p,
           percent: Number(p.percent),
-          // A tenure that has run out is not a live obligation.
-          expired: !!p.ends_on && new Date(p.ends_on) < /* @__PURE__ */ new Date()
+          earned_this_period: Number(p.earned_this_period),
+          earned_total: Number(p.earned_total),
+          paid_total: Number(p.paid_total),
+          outstanding: Number(p.outstanding)
         });
       }
       res.json({
@@ -3382,8 +3484,7 @@ function createLiveRouter(pool2) {
         schools: rows.rows.map((r) => {
           const share = byId.get(String(r.school_id)) || [];
           const companyShare = Number(r.company_share || 0);
-          const live = share.filter((p) => p.active && !p.expired);
-          const owed = live.reduce((a, p) => a + companyShare * p.percent / 100, 0);
+          const owed = share.reduce((a, p) => a + p.earned_this_period, 0);
           return {
             school_id: r.school_id,
             school_name: r.school_name,
@@ -3392,7 +3493,8 @@ function createLiveRouter(pool2) {
             company_share: companyShare,
             partners: share,
             owed_to_partners: owed,
-            company_keeps: companyShare - owed
+            company_keeps: companyShare - owed,
+            outstanding: share.reduce((a, p) => a + p.outstanding, 0)
           };
         }),
         unassigned_partners: partners.rows.filter((p) => p.school_id === null).map((p) => ({ ...p, percent: Number(p.percent) }))
@@ -3400,6 +3502,83 @@ function createLiveRouter(pool2) {
     } finally {
       client.release();
     }
+  }));
+  router.get("/schools/:id/breakdown", handle(async (req, res) => {
+    const { from, to, label } = range(req.query);
+    const id = req.params.id === "null" ? null : Number(req.params.id);
+    const r = await pool2.query(
+      "SELECT * FROM school_payment_breakdown($1::bigint, $2::date, $3::date)",
+      [id, from, to]
+    );
+    res.json({
+      period: { from, to, label },
+      payments: r.rows.map((x) => ({
+        ...x,
+        amount: Number(x.amount),
+        company_share: Number(x.company_share)
+      }))
+    });
+  }));
+  router.get("/schools/partners/:id/payouts", handle(async (req, res) => {
+    const [bal, rows] = await Promise.all([
+      pool2.query("SELECT * FROM partner_balance($1)", [req.params.id]),
+      pool2.query(
+        `SELECT * FROM school_partner_payouts
+         WHERE agreement_id = $1 ORDER BY paid_on DESC`,
+        [req.params.id]
+      )
+    ]);
+    res.json({
+      balance: bal.rows[0] || null,
+      payouts: rows.rows.map((p) => ({
+        ...p,
+        amount: Number(p.amount),
+        campus_share: Number(p.campus_share),
+        percent: Number(p.percent)
+      }))
+    });
+  }));
+  router.post("/schools/partners/:id/pay", founderOnly(async (req, res) => {
+    const { period_from, period_to, amount, method, reference, note } = req.body;
+    if (!(Number(amount) >= 0)) throw new Error("Enter the amount paid.");
+    if (!period_from || !period_to) {
+      throw new Error("Say which period this payment covers.");
+    }
+    const r = await pool2.query(
+      `SELECT record_partner_payout($1,$2::date,$3::date,$4::numeric,$5,$6,$7,$8) AS id`,
+      [
+        req.params.id,
+        period_from,
+        period_to,
+        Number(amount),
+        method || null,
+        reference || null,
+        note || null,
+        req.adminEmail
+      ]
+    );
+    res.status(201).json({ id: r.rows[0].id });
+  }));
+  router.post("/schools/partners/:id/renew", founderOnly(async (req, res) => {
+    const { ends_on, percent } = req.body;
+    if (!ends_on) throw new Error("Choose a new end date.");
+    await pool2.query(
+      "SELECT renew_partner_agreement($1,$2::date,$3::numeric,$4)",
+      [
+        req.params.id,
+        ends_on,
+        percent === void 0 || percent === null ? null : Number(percent),
+        req.adminEmail
+      ]
+    );
+    res.json({ ok: true });
+  }));
+  router.post("/schools/partners/:id/restore", founderOnly(async (req, res) => {
+    const r = await pool2.query(
+      "SELECT restore_partner_agreement($1,$2) AS status",
+      [req.params.id, req.adminEmail]
+    );
+    res.json({ ok: true, status: r.rows[0].status });
   }));
   router.post("/schools/partners", founderOnly(async (req, res) => {
     const {

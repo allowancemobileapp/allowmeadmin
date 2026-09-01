@@ -208,7 +208,7 @@ export default function Logs() {
                            const isAppLog = 'action_summary' in log;
                            if (!isAppLog) return log.action || 'Unknown Action';
                            
-                           const rawAction = log.action_summary || log.action || 'Unknown Action';
+                           const rawAction = log.action_summary || (log as any).action || 'Unknown Action';
                            
                            // Extract the row data from the details payload depending on how it's structured
                            const extra = log.details?.log_details?.extra || log.details?.extra || log.details;

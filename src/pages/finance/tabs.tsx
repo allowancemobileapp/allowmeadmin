@@ -873,11 +873,25 @@ export function StakeholderTab({ get }: any) {
         </>
       ) : (
         <>
-          <Note tone="amber" title="There is no share price.">
-            The company has never raised money, so nothing here is a market
-            value. ₦10 is par value — a legal minimum. Every figure below says
-            what it is based on and when it was set.
-          </Note>
+          {/* This used to assert flatly that there is no share price. Now
+              that one can be set, the claim has to follow the basis on the
+              figures rather than being hardcoded -- telling a shareholder
+              nothing has priced their shares, on a page showing a price a
+              round actually paid, would be the page lying to them. */}
+          {me.figures.some((f: any) =>
+             f.basis === 'last_round' || f.basis === 'independent_valuation') ? (
+            <Note tone="indigo" title="These figures come from a real price.">
+              At least one figure below is based on a price somebody actually
+              paid or an outside valuation, rather than an estimate. Each one
+              still says which, and when it was set.
+            </Note>
+          ) : (
+            <Note tone="amber" title="There is no market price yet.">
+              No round has priced these shares, so nothing here is a market
+              value. ₦10 is par value — a legal minimum, and what was paid in.
+              Every figure below says what it is based on and when it was set.
+            </Note>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {me.figures.map((f: any) => (

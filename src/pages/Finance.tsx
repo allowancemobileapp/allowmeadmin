@@ -21,6 +21,7 @@ import { Explain } from './finance/Explain';
 import { PeopleTab } from './finance/PeopleTab';
 import { LiveSplitTab } from './finance/LiveSplit';
 import { SchoolsTab } from './finance/SchoolsTab';
+import { SharePrice } from './finance/SharePrice';
 import { InvestorPicker } from './finance/Investors';
 
 /**
@@ -220,7 +221,8 @@ export default function Finance() {
                 <PayrollTab get={get} post={post} role={role} />
               </ReauthGate>
             )}
-            {tab === 'captable'    && <CapTableView data={capTable} />}
+            {tab === 'captable'    && <CapTableView data={capTable} get={get} post={post}
+                                        role={role} onDone={load} />}
             {tab === 'milestones'  && <MilestonesTab get={get} post={post} put={put} role={role} />}
             {tab === 'round'       && <RoundModelling data={capTable} get={get} post={post}
                                                       put={put} del={del} role={role} />}
@@ -384,7 +386,7 @@ function Overview({ summary, series }: any) {
 // Ownership, as registered today
 // --------------------------------------------------------------------------
 
-function CapTableView({ data }: any) {
+function CapTableView({ data, get, post, role, onDone }: any) {
   if (!data) return <Empty>No data.</Empty>;
   if (!data.holders?.length) {
     return <Empty>Nobody is on the cap table yet. Run migration 0080.</Empty>;
@@ -393,6 +395,10 @@ function CapTableView({ data }: any) {
 
   return (
     <div className="space-y-6">
+      {/* The price comes first. It is the figure that actually changes;
+          the register below is what it gets multiplied by. */}
+      <SharePrice get={get} post={post} role={role} onDone={onDone} />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Stat label="Shares issued" value={shares(totals.all_shares)} icon={PieIcon} />
         <Stat label="Share capital" value={fmtNaira(Number(totals.all_shares) * 10)}
@@ -493,18 +499,26 @@ function RoundModelling({ data, get, post, put, del, role }: any) {
 
       {investorTotal > 0 && (
         <Note tone="indigo">
-          Modelling a raise of{' '}
+          Raising{' '}
           <strong>&#8358;{investorTotal.toLocaleString('en-NG')}</strong> from
-          the people above. The Raising box below is ignored while anyone is
-          listed.
+          the {'people above'}. That figure fills the Raising box below and
+          moves whenever you change an amount up there.
         </Note>
       )}
 
       <Card className="p-5">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Field label="Raising (₦)">
-            <input type="number" className={inputCls} value={form.raise}
+          <Field label="Raising (₦)"
+                 hint={investorTotal > 0
+                   ? 'Added up from the people above. Edit their amounts to change it.'
+                   : undefined}>
+            <input type="number" className={inputCls}
+                   value={investorTotal > 0 ? investorTotal : form.raise}
                    placeholder="200000000"
+                   // Read-only while anyone is listed, so the two cannot
+                   // disagree. A box you can type into that is then ignored is
+                   // worse than one you cannot type into.
+                   readOnly={investorTotal > 0}
                    onChange={(e) => setForm({ ...form, raise: e.target.value })} />
           </Field>
           <Field label="Pre-money valuation (₦)">
