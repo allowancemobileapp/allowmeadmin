@@ -1,5 +1,13 @@
 import { Router } from "express";
 import { Pool } from "pg";
+import multer from "multer";
+
+// A receipt is a photo of a transfer or a bank PDF, not a video. 15MB is
+// generous and stops a mis-drop filling the bucket.
+const receiptUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+});
 
 // THE SAME MODULE THE GOLDEN TESTS VERIFY.
 //
@@ -55,6 +63,25 @@ export function createFinanceV2Router(pool: Pool) {
   const roleOf = async (email: string): Promise<string> => {
     const r = await pool.query('SELECT finance_role($1) AS role', [email || '']);
     return r.rows[0]?.role || 'none';
+  };
+
+  /**
+   * Supabase admin client for the private receipts bucket.
+   *
+   * The service-role key bypasses every row-level policy in the database, so
+   * it is read from the environment and never committed. Same shape as the
+   * contracts helper in peopleRoutes.ts, pointed at a different bucket.
+   */
+  const receipts = async () => {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) {
+      throw new Error(
+        'Receipt storage is not configured. Set SUPABASE_URL and '
+        + 'SUPABASE_SERVICE_ROLE_KEY in your Vercel environment variables.');
+    }
+    const { createClient } = await import('@supabase/supabase-js');
+    return createClient(url, key).storage.from('payroll-receipts');
   };
 
   /** Only the founder may certify, issue challenges or edit bands. */
@@ -332,15 +359,38 @@ export function createFinanceV2Router(pool: Pool) {
       WHERE ($1::date IS NULL OR pr.month = $1)
       ORDER BY pr.month DESC, ps.scale, s.full_name`, [month]);
 
-    const rows = r.rows.map((p) => ({
-      ...p,
-      full_salary: Number(p.full_salary),
-      cash_due: Number(p.cash_due),
-      cash_paid: Number(p.cash_paid),
-      accrued: Number(p.accrued),
-      extinguished: Number(p.extinguished),
-      overdue: !p.paid_on && new Date(p.due_on) < new Date(),
-    }));
+    // How many payments sit behind each line, so the row can offer "3
+    // payments" without a request per person.
+    const counts = await pool.query(`
+      SELECT payroll_run_id, COUNT(*) AS n, MAX(paid_on) AS last_paid
+      FROM payroll_payments
+      WHERE voided_at IS NULL
+      GROUP BY payroll_run_id`);
+    const byRun = new Map(counts.rows.map((c) =>
+      [c.payroll_run_id, { n: Number(c.n), last_paid: c.last_paid }]));
+
+    const rows = r.rows.map((p) => {
+      const paid = Number(p.cash_paid);
+      const due = Number(p.cash_due);
+      const seen = byRun.get(p.id);
+      return {
+        ...p,
+        full_salary: Number(p.full_salary),
+        cash_due: due,
+        cash_paid: paid,
+        accrued: Number(p.accrued),
+        extinguished: Number(p.extinguished),
+        // What is still owed for the month, so the form can default to it and
+        // the row can say so without the client re-deriving it.
+        outstanding: Math.max(0, due - paid),
+        payment_count: seen?.n || 0,
+        last_paid_on: seen?.last_paid || null,
+        // Part-paid is its own state. Before this it was indistinguishable
+        // from unpaid, because paid_on only flips when the month settles.
+        part_paid: paid > 0 && paid < due,
+        overdue: !p.paid_on && new Date(p.due_on) < new Date(),
+      };
+    });
 
     res.json(rows);
   }));
@@ -383,14 +433,260 @@ export function createFinanceV2Router(pool: Pool) {
       }
     }
 
-    const amount = Number(req.body.amount ?? line.cash_due);
-    const upd = await pool.query(`
-      UPDATE payroll_runs SET cash_paid = $1, paid_on = COALESCE($2, current_date)
-      WHERE id = $3 RETURNING *`,
-      [amount, req.body.paid_on || null, req.params.id]);
+    // Was: an UPDATE that overwrote cash_paid and set paid_on. That recorded
+    // no date a person chose, no reference, no receipt, could hold only one
+    // payment, and -- worst of the four -- wrote nothing to company_expenses,
+    // so the largest thing the company spends money on never appeared in the
+    // books. record_payroll_payment() does all of it in one transaction.
+    const amount = Math.round(Number(req.body.amount ?? line.cash_due));
 
-    await audit(req, 'salary.pay', 'payroll_runs', req.params.id, line, upd.rows[0]);
-    res.json(upd.rows[0]);
+    try {
+      const r = await pool.query(
+        `SELECT * FROM record_payroll_payment($1, $2, $3, $4, $5, $6, $7)`,
+        [req.params.id, amount, req.body.paid_on || null,
+         req.body.method || 'bank_transfer', req.body.reference || null,
+         req.body.note || null, req.adminEmail]);
+
+      const run = await pool.query(
+        'SELECT * FROM payroll_runs WHERE id = $1', [req.params.id]);
+
+      await audit(req, 'salary.pay', 'payroll_runs', req.params.id,
+                  line, { payment: r.rows[0], run: run.rows[0] });
+
+      return res.status(201).json({
+        payment: { ...r.rows[0], amount: Number(r.rows[0].amount) },
+        run: {
+          ...run.rows[0],
+          cash_paid: Number(run.rows[0].cash_paid),
+          cash_due: Number(run.rows[0].cash_due),
+        },
+      });
+    } catch (e: any) {
+      if (e.code === '42883') {
+        return res.status(400).json({
+          error: 'record_payroll_payment does not exist yet. Run '
+               + 'migrations/0090_payroll_payments.sql.',
+        });
+      }
+      throw e;
+    }
+  }));
+
+  // ---- Payment history, receipts, and reversals --------------------------
+
+  /**
+   * Every payment behind one payroll line.
+   *
+   * A person can see their own; the founder can see anyone's. Nobody else can
+   * see any -- the rows say what one named individual was paid.
+   */
+  router.get('/payroll/:id/payments', handle(async (req: any, res: any) => {
+    const own = await pool.query(`
+      SELECT pr.shareholder_id, s.login_email
+      FROM payroll_runs pr
+      LEFT JOIN shareholders s ON s.id = pr.shareholder_id
+      WHERE pr.id = $1`, [req.params.id]);
+    if (!own.rows[0]) throw new Error('No such payroll line.');
+
+    const isFounder = await roleOf(req.adminEmail) === 'founder';
+    const isSelf = (own.rows[0].login_email || '').toLowerCase()
+                 === (req.adminEmail || '').toLowerCase();
+    if (!isFounder && !isSelf) {
+      return res.status(403).json({
+        error: 'You can only see your own payment history.' });
+    }
+
+    const r = await pool.query(`
+      SELECT id, amount, paid_on, method, reference, note,
+             file_name, mime_type, size_bytes,
+             storage_path IS NOT NULL AS has_receipt,
+             expense_id, voided_at, voided_by, void_reason,
+             created_at, created_by
+      FROM payroll_payments
+      WHERE payroll_run_id = $1
+      ORDER BY paid_on DESC, created_at DESC`, [req.params.id]);
+
+    res.json(r.rows.map((p) => ({
+      ...p,
+      amount: Number(p.amount),
+      size_bytes: p.size_bytes === null ? null : Number(p.size_bytes),
+    })));
+  }));
+
+  /** Attach the receipt to a payment already recorded. */
+  router.post('/payroll/payments/:paymentId/receipt',
+    (req: any, res: any, next: any) => {
+      receiptUpload.single('file')(req, res, (err: any) => {
+        if (err) return res.status(400).json({ error: 'Upload failed: ' + err.message });
+        next();
+      });
+    },
+    handle(async (req: any, res: any) => {
+      if (await roleOf(req.adminEmail) !== 'founder') {
+        return res.status(403).json({ error: 'Only the founder can attach receipts.' });
+      }
+      if (!req.file) throw new Error('No file was attached.');
+
+      const existing = await pool.query(
+        'SELECT id, storage_path, voided_at FROM payroll_payments WHERE id = $1',
+        [req.params.paymentId]);
+      if (!existing.rows[0]) throw new Error('No such payment.');
+      if (existing.rows[0].voided_at) {
+        throw new Error('That payment was reversed. Record a new one instead.');
+      }
+
+      const bucket = await receipts();
+      // Namespaced by payment id, so a listing of the bucket cannot be walked
+      // to read somebody else's receipt by guessing a timestamp.
+      const safe = req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+      const path = `${req.params.paymentId}/${Date.now()}_${safe}`;
+
+      const { error } = await bucket.upload(path, req.file.buffer, {
+        contentType: req.file.mimetype, upsert: false });
+      if (error) throw new Error('Could not store the file: ' + error.message);
+
+      // Replacing a receipt leaves the old object behind rather than deleting
+      // it. Storage is cheap; a receipt destroyed by a mis-click is not
+      // recoverable, and the row only ever points at the current one.
+      const r = await pool.query(`
+        UPDATE payroll_payments
+        SET storage_path = $1, file_name = $2, mime_type = $3, size_bytes = $4
+        WHERE id = $5
+        RETURNING id, file_name, mime_type, size_bytes`,
+        [path, req.file.originalname, req.file.mimetype, req.file.size,
+         req.params.paymentId]);
+
+      await audit(req, 'salary.receipt.upload', 'payroll_payments',
+                  req.params.paymentId, null, { file: req.file.originalname });
+      res.status(201).json(r.rows[0]);
+    }));
+
+  /**
+   * A short-lived link to one receipt.
+   *
+   * Minted per request, expires in five minutes. The bucket is private, so
+   * there is no permanent URL to leak and a link copied out of the page stops
+   * working almost immediately.
+   */
+  router.get('/payroll/payments/:paymentId/receipt', handle(async (req: any, res: any) => {
+    const r = await pool.query(`
+      SELECT pp.storage_path, pp.file_name, s.login_email
+      FROM payroll_payments pp
+      LEFT JOIN shareholders s ON s.id = pp.shareholder_id
+      WHERE pp.id = $1`, [req.params.paymentId]);
+    if (!r.rows[0]) throw new Error('No such payment.');
+    if (!r.rows[0].storage_path) throw new Error('No receipt was attached to that payment.');
+
+    const isFounder = await roleOf(req.adminEmail) === 'founder';
+    const isSelf = (r.rows[0].login_email || '').toLowerCase()
+                 === (req.adminEmail || '').toLowerCase();
+    if (!isFounder && !isSelf) {
+      return res.status(403).json({ error: 'You can only open your own receipt.' });
+    }
+
+    const bucket = await receipts();
+    const { data, error } = await bucket.createSignedUrl(r.rows[0].storage_path, 300);
+    if (error) throw new Error('Could not create a link: ' + error.message);
+
+    await audit(req, 'salary.receipt.view', 'payroll_payments',
+                req.params.paymentId, null, null);
+    res.json({ url: data.signedUrl, file_name: r.rows[0].file_name, expires_in: 300 });
+  }));
+
+  /**
+   * Reverse a payment.
+   *
+   * A void, not a delete. The row stays and stops counting, because "entered
+   * on the 3rd, reversed on the 5th" is itself part of the record. The
+   * expense row goes, since an expense that never happened has no business in
+   * the cash position.
+   */
+  router.post('/payroll/payments/:paymentId/void',
+    founderOnly(async (req: any, res: any) => {
+      const r = await pool.query(
+        'SELECT * FROM void_payroll_payment($1, $2, $3)',
+        [req.params.paymentId, req.body.reason || '', req.adminEmail]);
+
+      await audit(req, 'salary.pay.void', 'payroll_payments',
+                  req.params.paymentId, null, { reason: req.body.reason });
+      res.json({ ...r.rows[0], amount: Number(r.rows[0].amount) });
+    }));
+
+  // ---- Does the app agree with the bank? ---------------------------------
+
+  /**
+   * The point of writing payroll into the expense ledger at all.
+   *
+   * A cash position nobody can check against a statement is a number to be
+   * taken on faith. This returns both, and the gap.
+   */
+  router.get('/reconciliation', handle(async (req: any, res: any) => {
+    const asOf = req.query.as_of ? String(req.query.as_of) : null;
+
+    try {
+      const [position, history, unrecorded] = await Promise.all([
+        pool.query('SELECT * FROM cash_position(COALESCE($1::date, current_date))',
+                   [asOf]),
+        pool.query('SELECT * FROM bank_reconciliation LIMIT 24'),
+        // Payroll that has been certified as due but never paid. It is the
+        // most common reason the two figures differ, so the page can say so
+        // instead of leaving the founder to work it out.
+        pool.query(`
+          SELECT COALESCE(SUM(cash_due - cash_paid), 0) AS unpaid_payroll
+          FROM payroll_runs WHERE cash_paid < cash_due`),
+      ]);
+
+      const p = position.rows[0] || {};
+      res.json({
+        as_of: asOf || new Date().toISOString().slice(0, 10),
+        // NAIRA throughout -- company_income and company_expenses are naira,
+        // and cash_position() already divides capital_events out of kobo.
+        income_in: Number(p.income_in || 0),
+        capital_in: Number(p.capital_in || 0),
+        expenses_out: Number(p.expenses_out || 0),
+        app_says: Number(p.net_position || 0),
+        // KOBO, because payroll_runs is kobo. Named so nobody has to guess.
+        unpaid_payroll_kobo: Number(unrecorded.rows[0]?.unpaid_payroll || 0),
+        history: history.rows.map((h) => ({
+          as_of: h.as_of,
+          account: h.account,
+          bank_says: Number(h.bank_says),
+          app_says: Number(h.app_says),
+          difference: Number(h.difference),
+          note: h.note,
+        })),
+      });
+    } catch (e: any) {
+      if (e.code === '42883' || e.code === '42P01') {
+        return res.status(400).json({
+          error: 'The reconciliation views do not exist yet. Run '
+               + 'migrations/0090_payroll_payments.sql.',
+        });
+      }
+      throw e;
+    }
+  }));
+
+  /** What the bank statement says, typed off the statement. */
+  router.post('/reconciliation', founderOnly(async (req: any, res: any) => {
+    const { as_of, balance, account, note } = req.body;
+    if (!as_of) throw new Error('Which date is this balance as at?');
+    if (balance === undefined || balance === null || balance === '') {
+      throw new Error('What does the statement say?');
+    }
+
+    const r = await pool.query(`
+      INSERT INTO bank_balances (as_of, balance, account, note, created_by)
+      VALUES ($1, $2, COALESCE($3, 'main'), $4, $5)
+      ON CONFLICT (as_of, account) DO UPDATE
+        SET balance = EXCLUDED.balance, note = EXCLUDED.note,
+            created_by = EXCLUDED.created_by
+      RETURNING *`,
+      [as_of, Number(balance), account || 'main', note || null, req.adminEmail]);
+
+    await audit(req, 'bank.balance.record', 'bank_balances', r.rows[0].id,
+                null, r.rows[0]);
+    res.status(201).json({ ...r.rows[0], balance: Number(r.rows[0].balance) });
   }));
 
   router.get('/deferred', handle(async (_req: any, res: any) => {
