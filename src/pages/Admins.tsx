@@ -26,6 +26,53 @@ const PAGE_MODULES = [
   { id: 'feed_approvals', label: 'Feed Approvals' },
   { id: 'schools_mgmt', label: 'School Mgmt' },
   { id: 'analytics', label: 'Analytics & Growth' },
+  // Company Finance was reachable in the sidebar but missing from this list,
+  // so it could never actually be granted -- only the super-admin ever saw
+  // it. Its individual screens are below, because granting the whole thing in
+  // one tick hands over every salary and the cap table along with it.
+  { id: 'finance', label: 'Company Finance' },
+];
+
+/**
+ * The screens inside Company Finance.
+ *
+ * SEPARATE FROM THE LIST ABOVE ON PURPOSE. "Company Finance" as a single
+ * permission is all-or-nothing, and the things behind it are not equivalent:
+ * campus income is something a student partner should see, and what every
+ * officer is paid is not. `sensitive` marks the ones that expose an
+ * individual's pay or somebody's ownership, so it is obvious at the moment of
+ * granting rather than afterwards.
+ *
+ * Ticking a screen here is only half of it. Writing -- certifying a month,
+ * recording a payment, moving shares -- is gated separately by the finance
+ * role on the Access tab, and a screen granted here still opens read-only for
+ * anyone who is not the founder.
+ */
+const FINANCE_SCREENS = [
+  { id: 'overview',    label: 'Money in & out',
+    hint: 'Income, expenses and the running total.' },
+  { id: 'live',        label: 'Live split',
+    hint: 'What each stakeholder has earned in real time.' },
+  { id: 'grossprofit', label: 'Gross profit',
+    hint: 'The monthly certification and expense tagging.' },
+  { id: 'payroll',     label: 'Payroll', sensitive: true,
+    hint: 'Every salary, what was paid, and the receipts.' },
+  { id: 'captable',    label: 'Ownership & share price', sensitive: true,
+    hint: 'Who owns what, and what a share is worth.' },
+  { id: 'milestones',  label: 'Milestones',
+    hint: 'Award schemes, challenges and vesting.' },
+  { id: 'round',       label: 'Round modelling', sensitive: true,
+    hint: 'Dilution modelling. Reads the full cap table.' },
+  { id: 'mystake',     label: 'My stake',
+    hint: "Only ever the signed-in person's own holding." },
+  { id: 'schools',     label: 'Campuses',
+    hint: 'Campus income and revenue-share agreements.' },
+  { id: 'people',      label: 'People', sensitive: true,
+    hint: 'Staff records, contracts and salaries.' },
+  { id: 'record',      label: 'Record',
+    hint: 'Log income, expenses, valuations and share moves.' },
+  { id: 'reports',     label: 'Reports',
+    hint: 'Exports and statements.' },
 ];
 
 export default function Admins() {
@@ -40,6 +87,10 @@ export default function Admins() {
   const [allowedPages, setAllowedPages] = useState<Record<string, boolean>>(() => {
     return PAGE_MODULES.reduce((acc, p) => ({...acc, [p.id]: true}), {});
   });
+  // Finance screens start OFF even though pages start on. The rest of the
+  // admin app is operational; this is payroll and ownership, and the safe
+  // default for those is nothing.
+  const [financeTabs, setFinanceTabs] = useState<Record<string, boolean>>({});
   const [error, setError] = useState('');
   const { get, post, put, del } = useApi();
 
@@ -62,6 +113,7 @@ export default function Admins() {
     setCanCreateUnlimited(false);
     setMaxSupply(1);
     setAllowedPages(PAGE_MODULES.reduce((acc, p) => ({...acc, [p.id]: true}), {}));
+    setFinanceTabs({});
     setEditingId(null);
     setError('');
   };
@@ -84,6 +136,15 @@ export default function Admins() {
       PAGE_MODULES.forEach(p => newAllowedPages[p.id] = false);
     }
     setAllowedPages(newAllowedPages);
+
+    // An admin saved before finance screens existed has no finance_tabs key.
+    // That reads as "nothing granted" rather than "everything granted": the
+    // absence of a decision is not consent to see everybody's salary.
+    const granted: string[] = perms.finance_tabs || [];
+    const newFinance: Record<string, boolean> = {};
+    FINANCE_SCREENS.forEach(t => newFinance[t.id] = granted.includes(t.id));
+    setFinanceTabs(newFinance);
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -96,9 +157,23 @@ export default function Admins() {
       return setError('Please select at least one page module to grant access to.');
     }
 
+    const selectedFinanceCount =
+      Object.keys(financeTabs).filter(k => financeTabs[k]).length;
+    if (allowedPages.finance && selectedFinanceCount === 0) {
+      return setError(
+        'Company Finance is ticked but none of its screens are. Pick at least '
+        + 'one screen, or untick Company Finance -- as it stands this account '
+        + 'would see the page and nothing on it.');
+    }
+
     try {
+      const selectedFinance = Object.keys(financeTabs).filter(k => financeTabs[k]);
+
       const permissions = {
         pages: selectedPages,
+        // Only meaningful alongside the 'finance' page. Stored regardless so
+        // a revoked-then-restored account keeps the screens it had.
+        finance_tabs: selectedFinance,
         canCreateUnlimited,
         maxSupply
       };
@@ -129,6 +204,15 @@ export default function Admins() {
 
   const togglePage = (id: string) => {
     setAllowedPages(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleFinance = (id: string) => {
+    setFinanceTabs(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const setAllFinance = (on: boolean) => {
+    setFinanceTabs(FINANCE_SCREENS.reduce(
+      (acc, t) => ({ ...acc, [t.id]: on }), {}));
   };
 
   return (
@@ -214,6 +298,59 @@ export default function Admins() {
             </div>
           </div>
 
+          {/* Only once Company Finance is actually granted. A list of screens
+              for a page somebody cannot open is noise. */}
+          {allowedPages.finance && (
+            <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-semibold text-slate-600 dark:text-slate-400 text-sm">
+                  Company Finance Screens
+                </label>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => setAllFinance(true)}
+                          className="text-xs font-bold text-indigo-600 hover:text-indigo-500">
+                    ALL
+                  </button>
+                  <button type="button" onClick={() => setAllFinance(false)}
+                          className="text-xs font-bold text-slate-500 hover:text-slate-700">
+                    NONE
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">
+                Which screens this account sees inside Company Finance. Screens
+                marked <span className="text-amber-600 font-bold">sensitive</span>{' '}
+                show an individual&rsquo;s pay or somebody&rsquo;s ownership.
+                Being able to <em>change</em> anything is separate again, and is
+                set by the finance role on the Access tab.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {FINANCE_SCREENS.map(screen => (
+                  <label key={screen.id}
+                         className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300 font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!financeTabs[screen.id]}
+                      onChange={() => toggleFinance(screen.id)}
+                      className="rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 mt-0.5 shrink-0"
+                    />
+                    <span>
+                      {screen.label}
+                      {screen.sensitive && (
+                        <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 align-middle">
+                          sensitive
+                        </span>
+                      )}
+                      <span className="block text-xs text-slate-500 font-normal">
+                        {screen.hint}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <button type="submit" className="py-2 px-6 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors">
             {editingId ? 'UPDATE ACCOUNT ACCESS' : 'AUTHORIZE ACCOUNT'}
           </button>
@@ -235,6 +372,14 @@ export default function Admins() {
             {admins.map((admin) => {
               const perms = (admin.permissions as any) || {};
               const pages = perms?.pages ? perms.pages.join(', ') : (perms?.all ? 'All Access' : 'Custom');
+              // Spelled out rather than counted. "3 finance screens" does not
+              // tell you whether payroll is one of them.
+              const financeGranted: string[] = perms?.finance_tabs || [];
+              const financeLabels = FINANCE_SCREENS
+                .filter(t => financeGranted.includes(t.id))
+                .map(t => t.label);
+              const sensitiveGranted = FINANCE_SCREENS
+                .filter(t => t.sensitive && financeGranted.includes(t.id));
               const couponStatus = admin.email === 'allowancemobileapp@gmail.com' ? 'Unlimited' : (perms.canCreateUnlimited ? 'Unlimited' : `Max ${perms.maxSupply || 1}`);
               
               return (
@@ -242,8 +387,21 @@ export default function Admins() {
                   <td className="px-6 py-4 text-slate-800 dark:text-slate-200 font-medium">{admin.email}</td>
                   <td className="px-6 py-4 text-slate-600 dark:text-slate-400">{admin.title || 'Admin'}</td>
                   <td className="px-6 py-4 text-slate-600 dark:text-slate-400 font-medium text-xs">{couponStatus}</td>
-                  <td className="px-6 py-4 text-slate-500 truncate max-w-xs" title={pages}>
-                    {pages}
+                  <td className="px-6 py-4 text-slate-500 max-w-xs">
+                    <p className="truncate" title={pages}>{pages}</p>
+                    {financeLabels.length > 0 && (
+                      <p className="text-xs mt-1 whitespace-normal">
+                        <span className="font-bold text-slate-400">Finance:</span>{' '}
+                        <span className="text-slate-500">
+                          {financeLabels.join(', ')}
+                        </span>
+                        {sensitiveGranted.length > 0 && (
+                          <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
+                            {sensitiveGranted.length} sensitive
+                          </span>
+                        )}
+                      </p>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex gap-3">

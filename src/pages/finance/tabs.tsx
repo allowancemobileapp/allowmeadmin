@@ -3,10 +3,13 @@ import {
   Card, Stat, Field, Empty, Note, BandPill, BasisFigure, Th, Td,
   fmtKobo, pct, shares, inputCls, btnCls, btnGhost,
 } from './ui';
+import {
+  PayPayrollModal, PaymentHistory, Reconciliation,
+} from './PayrollPayment';
 import { ExpenseTagging } from './ExpenseTagging';
 import {
   ShieldCheck, Lock, AlertTriangle, CheckCircle2, XCircle, Clock,
-  ArrowRightLeft, FilePlus2, Wallet, Target, TrendingUp,
+  ArrowRightLeft, FilePlus2, Wallet, Target, TrendingUp, Receipt,
 } from 'lucide-react';
 
 const monthKey = (d = new Date()) => d.toISOString().slice(0, 7);
@@ -246,7 +249,9 @@ export function PayrollTab({ get, post, role }: any) {
   const [runs, setRuns] = useState<any[]>([]);
   const [deferred, setDeferred] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [paying, setPaying] = useState<any>(null);
+  const [openHistory, setOpenHistory] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -261,20 +266,23 @@ export function PayrollTab({ get, post, role }: any) {
 
   useEffect(() => { load(); }, [load]);
 
-  const pay = async (id: string) => {
-    setBusy(id); setErr(null);
-    try { await post(`/api/finance/payroll/${id}/pay`, {}); await load(); }
-    catch (e: any) { setErr(e.message); }
-    finally { setBusy(null); }
-  };
+  // Recording a payment moves the expense ledger too, so the reconciliation
+  // card underneath has to be told to re-read rather than sit on a figure
+  // that was true a moment ago.
+  const afterPayment = () => { load(); setReloadKey((k) => k + 1); };
 
   const totalCash = runs.reduce((a, r) => a + r.cash_due, 0);
   const totalAccrued = runs.reduce((a, r) => a + r.accrued, 0);
+  const totalPaid = runs.reduce((a, r) => a + r.cash_paid, 0);
+  const stillOwed = Math.max(0, totalCash - totalPaid);
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Stat label="Cash payroll this month" value={fmtKobo(totalCash)} icon={Wallet} />
+        <Stat label="Cash payroll this month" value={fmtKobo(totalCash)} icon={Wallet}
+              sub={totalCash > 0
+                ? `${fmtKobo(totalPaid)} paid · ${fmtKobo(stillOwed)} still owed`
+                : undefined} />
         <Stat label="Accrued this month" value={fmtKobo(totalAccrued)} tone="amber"
               sub="half the shortfall; the rest is extinguished" />
         <Stat label="Total deferred liability"
@@ -297,6 +305,12 @@ export function PayrollTab({ get, post, role }: any) {
 
       {err && <Note tone="rose">{err}</Note>}
 
+      {paying && (
+        <PayPayrollModal run={paying} post={post}
+                         onClose={() => setPaying(null)}
+                         onDone={() => { setPaying(null); afterPayment(); }} />
+      )}
+
       <Card className="overflow-hidden">
         <div className="p-5 border-b border-slate-200 dark:border-slate-800">
           <h2 className="text-sm font-bold text-slate-700 dark:text-slate-300">
@@ -318,7 +332,8 @@ export function PayrollTab({ get, post, role }: any) {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {runs.map((r) => (
-                  <tr key={r.id}>
+                  <React.Fragment key={r.id}>
+                  <tr>
                     <Td>
                       <p className="font-medium text-slate-800 dark:text-slate-200">
                         {r.full_name}
@@ -336,7 +351,13 @@ export function PayrollTab({ get, post, role }: any) {
                     <Td>
                       {r.paid_on ? (
                         <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Paid
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Paid{' '}
+                          {new Date(r.paid_on).toLocaleDateString('en-NG')}
+                        </span>
+                      ) : r.part_paid ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-600">
+                          <Clock className="w-3.5 h-3.5" />
+                          {fmtKobo(r.outstanding)} still owed
                         </span>
                       ) : r.overdue ? (
                         <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-600">
@@ -349,14 +370,38 @@ export function PayrollTab({ get, post, role }: any) {
                       )}
                     </Td>
                     <Td right>
-                      {role === 'founder' && !r.paid_on && r.cash_due > 0 && (
-                        <button onClick={() => pay(r.id)} disabled={busy === r.id}
-                                className={btnGhost}>
-                          {busy === r.id ? '…' : 'Mark paid'}
+                      <div className="flex items-center justify-end gap-1">
+                        {/* The history is open to the person themselves as
+                            well as the founder -- it is their own salary and
+                            their own receipts. */}
+                        <button className={btnGhost}
+                                onClick={() => setOpenHistory(
+                                  openHistory === r.id ? null : r.id)}
+                                title="Payment history and receipts">
+                          <Receipt className="w-3.5 h-3.5" />
+                          {r.payment_count > 0 && (
+                            <span className="ml-1 text-[10px] font-bold">
+                              {r.payment_count}
+                            </span>
+                          )}
                         </button>
-                      )}
+                        {role === 'founder' && r.cash_paid < r.cash_due && (
+                          <button onClick={() => setPaying(r)} className={btnCls}>
+                            Record payment
+                          </button>
+                        )}
+                      </div>
                     </Td>
                   </tr>
+                  {openHistory === r.id && (
+                    <tr>
+                      <td colSpan={8} className="bg-slate-50 dark:bg-slate-800/30">
+                        <PaymentHistory run={r} get={get} post={post}
+                                        role={role} onChange={afterPayment} />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -401,6 +446,8 @@ export function PayrollTab({ get, post, role }: any) {
           </table>
         </div>
       </Card>
+
+      <Reconciliation key={reloadKey} get={get} post={post} role={role} />
     </div>
   );
 }

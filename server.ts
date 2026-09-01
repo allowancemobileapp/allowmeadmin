@@ -12,6 +12,7 @@ import { createFinanceRouter } from "./server/financeRoutes.js";
 import { createFinanceV2Router } from "./server/financeV2Routes.js";
 import { createPeopleRouter } from "./server/peopleRoutes.js";
 import { createLiveRouter } from "./server/liveRoutes.js";
+import { financeGuard, liveGuard, peopleGuard } from "./server/financeAccess.js";
 
 dotenv.config();
 
@@ -284,18 +285,20 @@ app.delete('/api/services/:id', requireAdmin, async (req, res) => {
 app.use('/api', requireAdmin, createLegacyRouter(pool));
 app.use('/api/library', requireAdmin, createLibraryRouter(pool));
 app.use('/api/users', requireAdmin, createUserRouter(pool));
-// Ownership, salaries and valuation. Mounted behind requireAdmin like
-// everything else -- and see the note in financeRoutes.ts about that being a
-// header check rather than real authentication.
-app.use('/api/finance', requireAdmin, createFinanceRouter(pool));
+// Ownership, salaries and valuation. requireAdmin says WHO is calling;
+// financeGuard says which of the thirteen finance screens they were granted,
+// and refuses anything unmapped. See server/financeAccess.ts -- including the
+// note that requireAdmin is still a header check rather than real
+// authentication.
+app.use('/api/finance', requireAdmin, financeGuard, createFinanceRouter(pool));
 // Sections 3-9 of the v2 spec: gross profit certification, payroll bands,
 // deferred pay, milestones, roles and audit. Same mount point, second
 // router, so the client sees one /api/finance surface.
-app.use('/api/finance', requireAdmin, createFinanceV2Router(pool));
+app.use('/api/finance', requireAdmin, financeGuard, createFinanceV2Router(pool));
 // Staff and stakeholders: access, salary, contracts, rewards.
-app.use('/api/people', requireAdmin, createPeopleRouter(pool));
+app.use('/api/people', requireAdmin, peopleGuard, createPeopleRouter(pool));
 // Live split, campus earnings, modelled investors.
-app.use('/api/live', requireAdmin, createLiveRouter(pool));
+app.use('/api/live', requireAdmin, liveGuard, createLiveRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {

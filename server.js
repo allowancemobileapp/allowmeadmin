@@ -1576,6 +1576,7 @@ function createFinanceRouter(pool2) {
 
 // server/financeV2Routes.ts
 import { Router as Router4 } from "express";
+import multer2 from "multer";
 
 // src/lib/finance/money.ts
 var naira = (n) => Math.round(n * 100);
@@ -1923,6 +1924,10 @@ function respondByDate(issuedOn) {
 }
 
 // server/financeV2Routes.ts
+var receiptUpload = multer2({
+  storage: multer2.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 }
+});
 function createFinanceV2Router(pool2) {
   const router = Router4();
   const handle = (fn) => async (req, res) => {
@@ -1954,6 +1959,17 @@ function createFinanceV2Router(pool2) {
   const roleOf = async (email) => {
     const r = await pool2.query("SELECT finance_role($1) AS role", [email || ""]);
     return r.rows[0]?.role || "none";
+  };
+  const receipts = async () => {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) {
+      throw new Error(
+        "Receipt storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your Vercel environment variables."
+      );
+    }
+    const { createClient } = await import("@supabase/supabase-js");
+    return createClient(url, key).storage.from("payroll-receipts");
   };
   const founderOnly = (fn) => handle(async (req, res) => {
     const role = await roleOf(req.adminEmail);
@@ -2205,15 +2221,36 @@ function createFinanceV2Router(pool2) {
       JOIN pay_scales ps ON ps.shareholder_id = pr.shareholder_id
       WHERE ($1::date IS NULL OR pr.month = $1)
       ORDER BY pr.month DESC, ps.scale, s.full_name`, [month]);
-    const rows = r.rows.map((p) => ({
-      ...p,
-      full_salary: Number(p.full_salary),
-      cash_due: Number(p.cash_due),
-      cash_paid: Number(p.cash_paid),
-      accrued: Number(p.accrued),
-      extinguished: Number(p.extinguished),
-      overdue: !p.paid_on && new Date(p.due_on) < /* @__PURE__ */ new Date()
-    }));
+    const counts = await pool2.query(`
+      SELECT payroll_run_id, COUNT(*) AS n, MAX(paid_on) AS last_paid
+      FROM payroll_payments
+      WHERE voided_at IS NULL
+      GROUP BY payroll_run_id`);
+    const byRun = new Map(
+      counts.rows.map((c) => [c.payroll_run_id, { n: Number(c.n), last_paid: c.last_paid }])
+    );
+    const rows = r.rows.map((p) => {
+      const paid = Number(p.cash_paid);
+      const due = Number(p.cash_due);
+      const seen = byRun.get(p.id);
+      return {
+        ...p,
+        full_salary: Number(p.full_salary),
+        cash_due: due,
+        cash_paid: paid,
+        accrued: Number(p.accrued),
+        extinguished: Number(p.extinguished),
+        // What is still owed for the month, so the form can default to it and
+        // the row can say so without the client re-deriving it.
+        outstanding: Math.max(0, due - paid),
+        payment_count: seen?.n || 0,
+        last_paid_on: seen?.last_paid || null,
+        // Part-paid is its own state. Before this it was indistinguishable
+        // from unpaid, because paid_on only flips when the month settles.
+        part_paid: paid > 0 && paid < due,
+        overdue: !p.paid_on && new Date(p.due_on) < /* @__PURE__ */ new Date()
+      };
+    });
     res.json(rows);
   }));
   router.post("/payroll/:id/pay", founderOnly(async (req, res) => {
@@ -2242,15 +2279,248 @@ function createFinanceV2Router(pool2) {
         });
       }
     }
-    const amount = Number(req.body.amount ?? line.cash_due);
-    const upd = await pool2.query(
-      `
-      UPDATE payroll_runs SET cash_paid = $1, paid_on = COALESCE($2, current_date)
-      WHERE id = $3 RETURNING *`,
-      [amount, req.body.paid_on || null, req.params.id]
+    const amount = Math.round(Number(req.body.amount ?? line.cash_due));
+    try {
+      const r = await pool2.query(
+        `SELECT * FROM record_payroll_payment($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          req.params.id,
+          amount,
+          req.body.paid_on || null,
+          req.body.method || "bank_transfer",
+          req.body.reference || null,
+          req.body.note || null,
+          req.adminEmail
+        ]
+      );
+      const run = await pool2.query(
+        "SELECT * FROM payroll_runs WHERE id = $1",
+        [req.params.id]
+      );
+      await audit(
+        req,
+        "salary.pay",
+        "payroll_runs",
+        req.params.id,
+        line,
+        { payment: r.rows[0], run: run.rows[0] }
+      );
+      return res.status(201).json({
+        payment: { ...r.rows[0], amount: Number(r.rows[0].amount) },
+        run: {
+          ...run.rows[0],
+          cash_paid: Number(run.rows[0].cash_paid),
+          cash_due: Number(run.rows[0].cash_due)
+        }
+      });
+    } catch (e) {
+      if (e.code === "42883") {
+        return res.status(400).json({
+          error: "record_payroll_payment does not exist yet. Run migrations/0090_payroll_payments.sql."
+        });
+      }
+      throw e;
+    }
+  }));
+  router.get("/payroll/:id/payments", handle(async (req, res) => {
+    const own = await pool2.query(`
+      SELECT pr.shareholder_id, fu.email AS login_email
+      FROM payroll_runs pr
+      LEFT JOIN finance_users fu ON fu.shareholder_id = pr.shareholder_id
+                                AND fu.active
+      WHERE pr.id = $1`, [req.params.id]);
+    if (!own.rows[0]) throw new Error("No such payroll line.");
+    const isFounder = await roleOf(req.adminEmail) === "founder";
+    const isSelf = (own.rows[0].login_email || "").toLowerCase() === (req.adminEmail || "").toLowerCase();
+    if (!isFounder && !isSelf) {
+      return res.status(403).json({
+        error: "You can only see your own payment history."
+      });
+    }
+    const r = await pool2.query(`
+      SELECT id, amount, paid_on, method, reference, note,
+             file_name, mime_type, size_bytes,
+             storage_path IS NOT NULL AS has_receipt,
+             expense_id, voided_at, voided_by, void_reason,
+             created_at, created_by
+      FROM payroll_payments
+      WHERE payroll_run_id = $1
+      ORDER BY paid_on DESC, created_at DESC`, [req.params.id]);
+    res.json(r.rows.map((p) => ({
+      ...p,
+      amount: Number(p.amount),
+      size_bytes: p.size_bytes === null ? null : Number(p.size_bytes)
+    })));
+  }));
+  router.post(
+    "/payroll/payments/:paymentId/receipt",
+    (req, res, next) => {
+      receiptUpload.single("file")(req, res, (err) => {
+        if (err) return res.status(400).json({ error: "Upload failed: " + err.message });
+        next();
+      });
+    },
+    handle(async (req, res) => {
+      if (await roleOf(req.adminEmail) !== "founder") {
+        return res.status(403).json({ error: "Only the founder can attach receipts." });
+      }
+      if (!req.file) throw new Error("No file was attached.");
+      const existing = await pool2.query(
+        "SELECT id, storage_path, voided_at FROM payroll_payments WHERE id = $1",
+        [req.params.paymentId]
+      );
+      if (!existing.rows[0]) throw new Error("No such payment.");
+      if (existing.rows[0].voided_at) {
+        throw new Error("That payment was reversed. Record a new one instead.");
+      }
+      const bucket = await receipts();
+      const safe = req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path2 = `${req.params.paymentId}/${Date.now()}_${safe}`;
+      const { error } = await bucket.upload(path2, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false
+      });
+      if (error) throw new Error("Could not store the file: " + error.message);
+      const r = await pool2.query(
+        `
+        UPDATE payroll_payments
+        SET storage_path = $1, file_name = $2, mime_type = $3, size_bytes = $4
+        WHERE id = $5
+        RETURNING id, file_name, mime_type, size_bytes`,
+        [
+          path2,
+          req.file.originalname,
+          req.file.mimetype,
+          req.file.size,
+          req.params.paymentId
+        ]
+      );
+      await audit(
+        req,
+        "salary.receipt.upload",
+        "payroll_payments",
+        req.params.paymentId,
+        null,
+        { file: req.file.originalname }
+      );
+      res.status(201).json(r.rows[0]);
+    })
+  );
+  router.get("/payroll/payments/:paymentId/receipt", handle(async (req, res) => {
+    const r = await pool2.query(`
+      SELECT pp.storage_path, pp.file_name, fu.email AS login_email
+      FROM payroll_payments pp
+      LEFT JOIN finance_users fu ON fu.shareholder_id = pp.shareholder_id
+                                AND fu.active
+      WHERE pp.id = $1`, [req.params.paymentId]);
+    if (!r.rows[0]) throw new Error("No such payment.");
+    if (!r.rows[0].storage_path) throw new Error("No receipt was attached to that payment.");
+    const isFounder = await roleOf(req.adminEmail) === "founder";
+    const isSelf = (r.rows[0].login_email || "").toLowerCase() === (req.adminEmail || "").toLowerCase();
+    if (!isFounder && !isSelf) {
+      return res.status(403).json({ error: "You can only open your own receipt." });
+    }
+    const bucket = await receipts();
+    const { data, error } = await bucket.createSignedUrl(r.rows[0].storage_path, 300);
+    if (error) throw new Error("Could not create a link: " + error.message);
+    await audit(
+      req,
+      "salary.receipt.view",
+      "payroll_payments",
+      req.params.paymentId,
+      null,
+      null
     );
-    await audit(req, "salary.pay", "payroll_runs", req.params.id, line, upd.rows[0]);
-    res.json(upd.rows[0]);
+    res.json({ url: data.signedUrl, file_name: r.rows[0].file_name, expires_in: 300 });
+  }));
+  router.post(
+    "/payroll/payments/:paymentId/void",
+    founderOnly(async (req, res) => {
+      const r = await pool2.query(
+        "SELECT * FROM void_payroll_payment($1, $2, $3)",
+        [req.params.paymentId, req.body.reason || "", req.adminEmail]
+      );
+      await audit(
+        req,
+        "salary.pay.void",
+        "payroll_payments",
+        req.params.paymentId,
+        null,
+        { reason: req.body.reason }
+      );
+      res.json({ ...r.rows[0], amount: Number(r.rows[0].amount) });
+    })
+  );
+  router.get("/reconciliation", handle(async (req, res) => {
+    const asOf = req.query.as_of ? String(req.query.as_of) : null;
+    try {
+      const [position, history, unrecorded] = await Promise.all([
+        pool2.query(
+          "SELECT * FROM cash_position(COALESCE($1::date, current_date))",
+          [asOf]
+        ),
+        pool2.query("SELECT * FROM bank_reconciliation LIMIT 24"),
+        // Payroll that has been certified as due but never paid. It is the
+        // most common reason the two figures differ, so the page can say so
+        // instead of leaving the founder to work it out.
+        pool2.query(`
+          SELECT COALESCE(SUM(cash_due - cash_paid), 0) AS unpaid_payroll
+          FROM payroll_runs WHERE cash_paid < cash_due`)
+      ]);
+      const p = position.rows[0] || {};
+      res.json({
+        as_of: asOf || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+        // NAIRA throughout -- company_income and company_expenses are naira,
+        // and cash_position() already divides capital_events out of kobo.
+        income_in: Number(p.income_in || 0),
+        capital_in: Number(p.capital_in || 0),
+        expenses_out: Number(p.expenses_out || 0),
+        app_says: Number(p.net_position || 0),
+        // KOBO, because payroll_runs is kobo. Named so nobody has to guess.
+        unpaid_payroll_kobo: Number(unrecorded.rows[0]?.unpaid_payroll || 0),
+        history: history.rows.map((h) => ({
+          as_of: h.as_of,
+          account: h.account,
+          bank_says: Number(h.bank_says),
+          app_says: Number(h.app_says),
+          difference: Number(h.difference),
+          note: h.note
+        }))
+      });
+    } catch (e) {
+      if (e.code === "42883" || e.code === "42P01") {
+        return res.status(400).json({
+          error: "The reconciliation views do not exist yet. Run migrations/0090_payroll_payments.sql."
+        });
+      }
+      throw e;
+    }
+  }));
+  router.post("/reconciliation", founderOnly(async (req, res) => {
+    const { as_of, balance, account, note } = req.body;
+    if (!as_of) throw new Error("Which date is this balance as at?");
+    if (balance === void 0 || balance === null || balance === "") {
+      throw new Error("What does the statement say?");
+    }
+    const r = await pool2.query(
+      `
+      INSERT INTO bank_balances (as_of, balance, account, note, created_by)
+      VALUES ($1, $2, COALESCE($3, 'main'), $4, $5)
+      ON CONFLICT (as_of, account) DO UPDATE
+        SET balance = EXCLUDED.balance, note = EXCLUDED.note,
+            created_by = EXCLUDED.created_by
+      RETURNING *`,
+      [as_of, Number(balance), account || "main", note || null, req.adminEmail]
+    );
+    await audit(
+      req,
+      "bank.balance.record",
+      "bank_balances",
+      r.rows[0].id,
+      null,
+      r.rows[0]
+    );
+    res.status(201).json({ ...r.rows[0], balance: Number(r.rows[0].balance) });
   }));
   router.get("/deferred", handle(async (_req, res) => {
     const [balances, history] = await Promise.all([
@@ -2797,9 +3067,9 @@ function createFinanceV2Router(pool2) {
 
 // server/peopleRoutes.ts
 import { Router as Router5 } from "express";
-import multer2 from "multer";
-var upload2 = multer2({
-  storage: multer2.memoryStorage(),
+import multer3 from "multer";
+var upload2 = multer3({
+  storage: multer3.memoryStorage(),
   // A contract is a document, not a video. 15MB is generous and stops a
   // mis-drop filling the bucket.
   limits: { fileSize: 15 * 1024 * 1024 }
@@ -3707,6 +3977,112 @@ function createLiveRouter(pool2) {
   return router;
 }
 
+// server/financeAccess.ts
+var SHELL = /^\/(role|bootstrap|settings|expense-categories)(\/|$)/;
+var FINANCE_RULES = [
+  // -- Money in & out ------------------------------------------------------
+  { test: /^\/(summary|timeseries)(\/|$)/, screens: ["overview"] },
+  { test: /^\/revenue(\/|$)/, screens: ["overview", "reports"] },
+  { test: /^\/income(\/|$)/, screens: ["overview", "record"] },
+  {
+    test: /^\/expenses(\/|$)/,
+    screens: ["overview", "grossprofit", "record"]
+  },
+  // -- Gross profit --------------------------------------------------------
+  { test: /^\/gross-profit(\/|$)/, screens: ["grossprofit"] },
+  // -- Payroll -------------------------------------------------------------
+  // /reconciliation lives here because the bank comparison is only meaningful
+  // to somebody who can already see what left the account in wages.
+  {
+    test: /^\/(payroll|deferred|pay-scales|salaries|reconciliation)(\/|$)/,
+    screens: ["payroll"]
+  },
+  // -- Ownership and the share price ---------------------------------------
+  {
+    test: /^\/(cap-table|share-price|share-transactions|shareholders|valuations)(\/|$)/,
+    screens: ["captable", "record"]
+  },
+  // Everyone's stake side by side. The Live split screen is built on it, and
+  // so is Ownership.
+  {
+    test: /^\/(stakeholders|snapshot)(\/|$)/,
+    screens: ["captable", "live", "reports"]
+  },
+  // -- Milestones ----------------------------------------------------------
+  { test: /^\/(awards|challenges|tranches)(\/|$)/, screens: ["milestones"] },
+  // -- Round modelling -----------------------------------------------------
+  { test: /^\/(model-round|safes)(\/|$)/, screens: ["round"] },
+  { test: /^\/capital(\/|$)/, screens: ["round", "record"] },
+  // -- My own stake --------------------------------------------------------
+  // Always allowed. It returns the signed-in person's own holding and
+  // nothing else, so there is nobody it could expose them to.
+  { test: /^\/me(\/|$)/, screens: ["*"] },
+  // -- Investments and liabilities -----------------------------------------
+  {
+    test: /^\/(investments|liabilities)(\/|$)/,
+    screens: ["record", "overview", "reports"]
+  },
+  // -- Reports -------------------------------------------------------------
+  { test: /^\/(balance-sheet|audit)(\/|$)/, screens: ["reports"] },
+  // -- The Access tab ------------------------------------------------------
+  // Finance roles are handed out here, so anyone who could reach it could
+  // grant themselves everything else. Founder-only inside the router already;
+  // this makes it unreachable rather than merely refused.
+  { test: /^\/users(\/|$)/, screens: ["__founder_only__"] }
+];
+var LIVE_RULES = [
+  { test: /^\/split(\/|$)/, screens: ["live"] },
+  { test: /^\/schools(\/|$)/, screens: ["schools"] },
+  // The named investors are the dropdown on Round modelling, and the same
+  // list names people on the Live split.
+  { test: /^\/investors(\/|$)/, screens: ["round", "live"] }
+];
+var PEOPLE_RULES = [
+  { test: /^\/me(\/|$)/, screens: ["*"] },
+  { test: /.*/, screens: ["people"] }
+];
+var SUPER_ADMINS = [
+  "allowancemobileapp@gmail.com",
+  "allowancemobielapp@gmail.com"
+];
+function financeScreenGuard(rules, label) {
+  return function guard(req, res, next) {
+    const email = String(req.adminEmail || "").toLowerCase();
+    if (SUPER_ADMINS.includes(email)) return next();
+    const perms = req.adminPermissions || {};
+    if (perms.all) return next();
+    const granted = Array.isArray(perms.finance_tabs) ? perms.finance_tabs : [];
+    const pages = Array.isArray(perms.pages) ? perms.pages : [];
+    if (!pages.includes("finance")) {
+      return res.status(403).json({
+        error: "This account has not been granted Company Finance. It can be turned on from Account Permissions."
+      });
+    }
+    const path2 = req.path || "/";
+    if (label === "finance" && SHELL.test(path2)) return next();
+    const rule = rules.find((r) => r.test.test(path2));
+    if (!rule) {
+      console.warn(`[finance-access] unmapped ${label} path: ${path2}`);
+      return res.status(403).json({
+        error: `This part of Company Finance (${path2}) has no permission rule, so it is refused by default. If you are seeing this on a screen you were granted, it needs a rule adding in server/financeAccess.ts.`
+      });
+    }
+    if (rule.screens.includes("*")) return next();
+    if (rule.screens.includes("__founder_only__")) {
+      return res.status(403).json({
+        error: "Only the founder can open the Access screen."
+      });
+    }
+    if (rule.screens.some((sc) => granted.includes(sc))) return next();
+    return res.status(403).json({
+      error: `This account has not been granted that Company Finance screen. It needs one of: ${rule.screens.join(", ")}.`
+    });
+  };
+}
+var financeGuard = financeScreenGuard(FINANCE_RULES, "finance");
+var liveGuard = financeScreenGuard(LIVE_RULES, "live");
+var peopleGuard = financeScreenGuard(PEOPLE_RULES, "people");
+
 // server.ts
 import cors from "cors";
 dotenv.config();
@@ -3922,10 +4298,10 @@ app.delete("/api/services/:id", requireAdmin, async (req, res) => {
 app.use("/api", requireAdmin, createLegacyRouter(pool));
 app.use("/api/library", requireAdmin, createLibraryRouter(pool));
 app.use("/api/users", requireAdmin, createUserRouter(pool));
-app.use("/api/finance", requireAdmin, createFinanceRouter(pool));
-app.use("/api/finance", requireAdmin, createFinanceV2Router(pool));
-app.use("/api/people", requireAdmin, createPeopleRouter(pool));
-app.use("/api/live", requireAdmin, createLiveRouter(pool));
+app.use("/api/finance", requireAdmin, financeGuard, createFinanceRouter(pool));
+app.use("/api/finance", requireAdmin, financeGuard, createFinanceV2Router(pool));
+app.use("/api/people", requireAdmin, peopleGuard, createPeopleRouter(pool));
+app.use("/api/live", requireAdmin, liveGuard, createLiveRouter(pool));
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM company_expenses ORDER BY expense_date DESC");

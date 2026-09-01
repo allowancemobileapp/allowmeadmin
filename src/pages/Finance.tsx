@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { useApi } from '../hooks/useApi';
+import { AuthContext } from '../App';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, CartesianGrid,
@@ -62,6 +63,28 @@ const STREAM_COLOURS = [
 
 export default function Finance() {
   const { get, post, put, del } = useApi();
+  const { permissions, email } = useContext(AuthContext);
+
+  /**
+   * TWO PERMISSION SYSTEMS, AND THEY DO DIFFERENT JOBS.
+   *
+   * `permissions.finance_tabs`, set on the Account Permissions page, decides
+   * which screens this account can SEE. The finance role from finance_users,
+   * set on the Access tab, decides what it can CHANGE. Both have to pass:
+   * being granted the Payroll screen does not make anyone able to record a
+   * payment, and being the founder does not conjure a tab that was never
+   * granted.
+   *
+   * An account with no finance_tabs key at all sees nothing. That key did not
+   * exist before per-screen permissions did, so its absence means nobody
+   * decided -- and defaulting an undecided account into everybody's salaries
+   * is the wrong way for this to fail.
+   */
+  const isSuperAdmin = permissions?.all
+    || email === 'allowancemobileapp@gmail.com'
+    || email === 'allowancemobielapp@gmail.com';
+  const grantedTabs: string[] = permissions?.finance_tabs || [];
+  const canSee = (id: string) => isSuperAdmin || grantedTabs.includes(id);
 
   const [tab, setTab] = useState('overview');
   const [period, setPeriod] = useState('month');
@@ -112,7 +135,7 @@ export default function Finance() {
 
   useEffect(() => { load(); }, [load]);
 
-  const TABS = [
+  const ALL_TABS = [
     { id: 'overview',    label: 'Money in & out',  icon: Wallet },
     { id: 'live',        label: 'Live split',      icon: TrendingUp },
     { id: 'grossprofit', label: 'Gross profit',    icon: ShieldCheck },
@@ -125,9 +148,25 @@ export default function Finance() {
     { id: 'people',      label: 'People',          icon: Users },
     { id: 'record',      label: 'Record',          icon: Plus },
     { id: 'reports',     label: 'Reports',         icon: Download },
+  ];
+
+  const TABS = [
+    ...ALL_TABS.filter((t) => canSee(t.id)),
+    // Access is founder-only regardless of what was granted. It is where
+    // finance roles are handed out, so anyone who could open it could grant
+    // themselves everything else.
     ...(role === 'founder'
       ? [{ id: 'access', label: 'Access', icon: KeyRound }] : []),
   ];
+
+  // Land on something that exists. Without this, an account granted only
+  // Campuses opens on 'overview' and sees an empty page under a tab strip
+  // that does not contain the tab it is showing.
+  useEffect(() => {
+    if (TABS.length > 0 && !TABS.some((t) => t.id === tab)) {
+      setTab(TABS[0].id);
+    }
+  }, [TABS.map((t) => t.id).join(','), tab]);
 
   const customIncomplete = period === 'custom' && (!custom.from || !custom.to);
   // Only these tabs are driven by the date filter. Showing it above a cap
@@ -180,6 +219,17 @@ export default function Finance() {
           </Field>
           <button onClick={load} disabled={customIncomplete} className={btnCls}>Apply</button>
         </Card>
+      )}
+
+      {/* Granted the page, granted none of its screens. Without this the tab
+          strip renders empty and the page looks broken rather than
+          deliberately restricted. */}
+      {TABS.length === 0 && (
+        <Note tone="amber" title="No Company Finance screens have been granted.">
+          This account can open the page but has not been given any of the
+          screens on it. The founder can turn them on under Account
+          Permissions &rarr; Company Finance Screens.
+        </Note>
       )}
 
       <div className="flex gap-1 border-b border-slate-200 dark:border-slate-800 overflow-x-auto">

@@ -366,8 +366,9 @@ export function createFinanceV2Router(pool: Pool) {
       FROM payroll_payments
       WHERE voided_at IS NULL
       GROUP BY payroll_run_id`);
-    const byRun = new Map(counts.rows.map((c) =>
-      [c.payroll_run_id, { n: Number(c.n), last_paid: c.last_paid }]));
+    const byRun = new Map<string, { n: number; last_paid: string | null }>(
+      counts.rows.map((c) =>
+        [c.payroll_run_id, { n: Number(c.n), last_paid: c.last_paid }]));
 
     const rows = r.rows.map((p) => {
       const paid = Number(p.cash_paid);
@@ -482,9 +483,10 @@ export function createFinanceV2Router(pool: Pool) {
    */
   router.get('/payroll/:id/payments', handle(async (req: any, res: any) => {
     const own = await pool.query(`
-      SELECT pr.shareholder_id, s.login_email
+      SELECT pr.shareholder_id, fu.email AS login_email
       FROM payroll_runs pr
-      LEFT JOIN shareholders s ON s.id = pr.shareholder_id
+      LEFT JOIN finance_users fu ON fu.shareholder_id = pr.shareholder_id
+                                AND fu.active
       WHERE pr.id = $1`, [req.params.id]);
     if (!own.rows[0]) throw new Error('No such payroll line.');
 
@@ -570,9 +572,10 @@ export function createFinanceV2Router(pool: Pool) {
    */
   router.get('/payroll/payments/:paymentId/receipt', handle(async (req: any, res: any) => {
     const r = await pool.query(`
-      SELECT pp.storage_path, pp.file_name, s.login_email
+      SELECT pp.storage_path, pp.file_name, fu.email AS login_email
       FROM payroll_payments pp
-      LEFT JOIN shareholders s ON s.id = pp.shareholder_id
+      LEFT JOIN finance_users fu ON fu.shareholder_id = pp.shareholder_id
+                                AND fu.active
       WHERE pp.id = $1`, [req.params.paymentId]);
     if (!r.rows[0]) throw new Error('No such payment.');
     if (!r.rows[0].storage_path) throw new Error('No receipt was attached to that payment.');
