@@ -3,6 +3,7 @@ import {
   Card, Stat, Field, Empty, Note, Th, Td,
   fmtKobo, shares, inputCls, btnCls, btnGhost,
 } from './ui';
+import { authHeadersForUpload } from '../../hooks/useApi';
 import {
   UserPlus, KeyRound, FileText, Gift, Upload, ExternalLink,
   ShieldCheck, Wallet, Users, Ban, Loader2,
@@ -585,7 +586,7 @@ function ContractsPane({ p, get, isFounder, onChange }: any) {
       // setting Content-Type by hand would break the boundary marker.
       const res = await fetch(`/api/people/${p.id}/contracts`, {
         method: 'POST',
-        headers: { 'x-admin-email': localStorage.getItem('admin_email') || '' },
+        headers: await authHeadersForUpload(),
         body: fd,
       });
       if (!res.ok) {

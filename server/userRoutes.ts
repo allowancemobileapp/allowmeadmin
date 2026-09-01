@@ -23,6 +23,10 @@ export function createUserRouter(pool: any) {
 
   router.get('/', handleReq(async (req: any, res: any) => {
     const { sort } = req.query;
+    // Interpolated into the SQL below, which is only safe because this
+    // ternary can produce exactly two values and neither comes from the
+    // request. A column name or a direction cannot be a bound parameter, so
+    // if this ever grows more options it needs a whitelist, not a passthrough.
     const order = sort === 'newest' ? 'DESC' : 'ASC';
 
     const result = await pool.query(`

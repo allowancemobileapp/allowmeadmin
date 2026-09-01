@@ -220,47 +220,51 @@ function AppRouter() {
   const [title, setTitle] = React.useState<string>('');
   const [loading, setLoading] = React.useState(true);
 
-  const verifyUser = async (userEmail: string) => {
-    console.log("================================");
-    console.log("VERIFYING USER:", userEmail);
-
+  /**
+   * Prove the sign-in to the server.
+   *
+   * This used to POST `{ email }` with no proof at all, so anybody could ask
+   * for anybody's permissions. It now sends the Firebase ID token and the
+   * server reads the address out of the signature -- the email is no longer
+   * something the client gets to assert.
+   */
+  const verifyUser = async (user: import('firebase/auth').User) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
 
     try {
-      console.log("Calling /api/auth/verify...");
+      const token = await user.getIdToken();
 
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: userEmail }),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         signal: controller.signal,
       });
 
-      console.log("Response Status:", res.status);
-
       if (!res.ok) {
-        localStorage.removeItem('admin_email');
         setEmail(null);
         setPermissions({});
-       await logoutFirebase();
-        const errText = await res.text();
-       alert(`Server Error: ${res.status} - ${errText}`);
-       return;
+        await logoutFirebase();
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || `Sign-in failed (${res.status}).`);
+        return;
       }
 
       const data = await res.json();
       if (data.verified) {
-        localStorage.setItem('admin_email', userEmail);
-        setEmail(userEmail);
+        // The server's copy, from the verified token -- not the one the
+        // client happened to have.
+        setEmail(data.email || user.email);
         setPermissions(data.permissions || {});
         setTitle(data.title || '');
       } else {
-       throw new Error('Cannot verify email');
+        throw new Error('Cannot verify this account.');
       }
     } catch (e: any) {
       console.error(e);
-      localStorage.removeItem('admin_email');
       setEmail(null);
       setPermissions({});
       setTitle('');
@@ -276,12 +280,11 @@ function AppRouter() {
     const unsub = auth.onAuthStateChanged(async (user) => {
       try {
         if (user?.email) {
-         await verifyUser(user.email);
+          await verifyUser(user);
         } else {
-         localStorage.removeItem('admin_email');
-         setEmail(null);
-         setPermissions({});
-         setTitle('');
+          setEmail(null);
+          setPermissions({});
+          setTitle('');
         }
       } finally {
         setLoading(false);
@@ -300,6 +303,10 @@ function AppRouter() {
   };
 
   const logout = async () => {
+    // Left over from when the client stored its own identity. Nothing reads
+    // it now, but an old address should not sit in browser storage after
+    // somebody signs out.
+    localStorage.removeItem('admin_email');
     await logoutFirebase();
   };
 

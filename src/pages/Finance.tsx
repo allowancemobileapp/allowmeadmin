@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { useApi } from '../hooks/useApi';
 import { AuthContext } from '../App';
+import { auth } from '../firebase';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, CartesianGrid,
@@ -985,7 +986,7 @@ function Reports({ get, qs, summary }: any) {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const who = () => localStorage.getItem('admin_email') || 'unknown';
+  const who = () => auth.currentUser?.email || 'unknown';
   const stamp = () => new Date().toISOString().slice(0, 10);
   const kobo = (k: any) => (Number(k || 0) / 100).toLocaleString('en-NG');
 

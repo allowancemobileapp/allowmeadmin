@@ -267,8 +267,13 @@ function createLibraryRouter(pool2) {
       return res.status(400).json({ error: "No file uploaded" });
     }
     const { createClient } = await import("@supabase/supabase-js");
-    const supabaseUrl = "https://quuazutreaitqoquzolg.supabase.co";
-    const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1dWF6dXRyZWFpdHFvcXV6b2xnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDA4OTYxOCwiZXhwIjoyMDU5NjY1NjE4fQ.pQoriaaK_dG1Z9nQUWdCYvFtugulM7ir9OjTukIhDGs";
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error(
+        "File storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the environment."
+      );
+    }
     const supabase = createClient(supabaseUrl, supabaseKey);
     const fileName = `${Date.now()}_${req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
     const { data, error } = await supabase.storage.from("library-materials").upload(fileName, req.file.buffer, {
@@ -522,10 +527,25 @@ ${text}` });
       const questions = JSON.parse(questionsText);
       if (questions.length > 0) {
         await pool2.query("DELETE FROM quiz_questions WHERE material_id = $1", [material_id]);
-        const values = questions.map(
-          (q) => `(${course_id}, ${material_id}, '${q.question_text.replace(/'/g, "''")}', '${q.option_a.replace(/'/g, "''")}', '${q.option_b.replace(/'/g, "''")}', '${q.option_c.replace(/'/g, "''")}', '${q.correct_option}')`
+        const cols = 7;
+        const placeholders = questions.map(
+          (_, i) => `(${Array.from({ length: cols }, (_2, c) => `$${i * cols + c + 1}`).join(",")})`
         ).join(",");
-        const result = await pool2.query(`INSERT INTO quiz_questions (course_id, material_id, question_text, option_a, option_b, option_c, correct_option) VALUES ${values} RETURNING *`);
+        const params = questions.flatMap((q) => [
+          course_id,
+          material_id,
+          String(q.question_text ?? ""),
+          String(q.option_a ?? ""),
+          String(q.option_b ?? ""),
+          String(q.option_c ?? ""),
+          String(q.correct_option ?? "")
+        ]);
+        const result = await pool2.query(
+          `INSERT INTO quiz_questions (course_id, material_id, question_text,
+             option_a, option_b, option_c, correct_option)
+           VALUES ${placeholders} RETURNING *`,
+          params
+        );
         await logAdminAction2(req, `Generated ${questions.length} quiz questions for material ${material_id}`, { course_id, count: questions.length });
         return res.json(result.rows);
       }
@@ -4083,12 +4103,123 @@ var financeGuard = financeScreenGuard(FINANCE_RULES, "finance");
 var liveGuard = financeScreenGuard(LIVE_RULES, "live");
 var peopleGuard = financeScreenGuard(PEOPLE_RULES, "people");
 
+// server/auth.ts
+import crypto from "crypto";
+var CERT_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+var PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "allowance-001";
+var CLOCK_SKEW_SECONDS = 60;
+var certCache = null;
+async function googlePublicKeys() {
+  if (certCache && certCache.expiresAt > Date.now()) return certCache.certs;
+  const res = await fetch(CERT_URL);
+  if (!res.ok) {
+    throw new Error(`Could not fetch Google's signing keys (${res.status}).`);
+  }
+  const certs = await res.json();
+  const cc = res.headers.get("cache-control") || "";
+  const maxAge = Number(/max-age=(\d+)/.exec(cc)?.[1] || 3600);
+  certCache = { certs, expiresAt: Date.now() + maxAge * 1e3 };
+  return certs;
+}
+function b64urlToBuffer(s) {
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+function decodeSegment(s) {
+  return JSON.parse(b64urlToBuffer(s).toString("utf8"));
+}
+async function verifyIdToken(token) {
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("Malformed token.");
+  const [headerB64, payloadB64, signatureB64] = parts;
+  let header;
+  let payload;
+  try {
+    header = decodeSegment(headerB64);
+    payload = decodeSegment(payloadB64);
+  } catch {
+    throw new Error("Token could not be read.");
+  }
+  if (header.alg !== "RS256") {
+    throw new Error(`Unexpected token algorithm: ${header.alg}.`);
+  }
+  if (!header.kid) throw new Error("Token has no key id.");
+  let certs = await googlePublicKeys();
+  if (!certs[header.kid]) {
+    certCache = null;
+    certs = await googlePublicKeys();
+    if (!certs[header.kid]) {
+      throw new Error("Token was signed with an unknown key.");
+    }
+  }
+  const verifier = crypto.createVerify("RSA-SHA256");
+  verifier.update(`${headerB64}.${payloadB64}`);
+  verifier.end();
+  const publicKey = crypto.createPublicKey(certs[header.kid]);
+  if (!verifier.verify(publicKey, b64urlToBuffer(signatureB64))) {
+    throw new Error("Token signature is not valid.");
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  if (payload.aud !== PROJECT_ID) {
+    throw new Error("Token was issued for a different application.");
+  }
+  if (payload.iss !== `https://securetoken.google.com/${PROJECT_ID}`) {
+    throw new Error("Token came from an unexpected issuer.");
+  }
+  if (typeof payload.exp !== "number" || payload.exp + CLOCK_SKEW_SECONDS < now) {
+    throw new Error("Session has expired. Sign in again.");
+  }
+  if (typeof payload.iat !== "number" || payload.iat - CLOCK_SKEW_SECONDS > now) {
+    throw new Error("Token is dated in the future.");
+  }
+  if (typeof payload.auth_time === "number" && payload.auth_time - CLOCK_SKEW_SECONDS > now) {
+    throw new Error("Token reports a sign-in that has not happened yet.");
+  }
+  if (!payload.sub || typeof payload.sub !== "string") {
+    throw new Error("Token has no subject.");
+  }
+  if (!payload.email || typeof payload.email !== "string") {
+    throw new Error("Token carries no email address.");
+  }
+  const provider = payload.firebase?.sign_in_provider || "unknown";
+  if (payload.email_verified !== true && provider !== "google.com") {
+    throw new Error(
+      "That email address has not been verified with its provider."
+    );
+  }
+  return {
+    uid: payload.sub,
+    email: String(payload.email).toLowerCase(),
+    emailVerified: payload.email_verified === true,
+    signInProvider: provider
+  };
+}
+function bearerToken(req) {
+  const raw = req.headers?.authorization || req.headers?.Authorization;
+  if (!raw || typeof raw !== "string") return null;
+  const m = /^Bearer\s+(.+)$/i.exec(raw.trim());
+  return m ? m[1].trim() : null;
+}
+
 // server.ts
 import cors from "cors";
 dotenv.config();
 var app = express2();
 var PORT = 3e3;
-app.use(cors());
+var ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Origin not allowed."));
+  },
+  credentials: true
+}));
 app.use(express2.json({ limit: "50mb" }));
 app.use(express2.urlencoded({ limit: "50mb", extended: true }));
 var envDbUrl = process.env.DATABASE_URL;
@@ -4199,46 +4330,101 @@ async function logAdminAction(admin_email, action, details) {
   }
 }
 function requireAdmin(req, res, next) {
-  const email = req.headers["x-admin-email"];
-  if (!email) {
-    res.status(401).json({ error: "Unauthorized. Missing x-admin-email header." });
+  const token = bearerToken(req);
+  if (!token) {
+    res.status(401).json({
+      error: "Not signed in. This request carried no authentication token.",
+      code: "NO_TOKEN"
+    });
     return;
   }
-  const lowerEmail = email.toLowerCase();
-  if (lowerEmail === "allowancemobileapp@gmail.com" || lowerEmail === "allowancemobielapp@gmail.com") {
-    req.adminEmail = lowerEmail;
-    next();
-    return;
-  }
-  pool.query("SELECT permissions FROM admin_users WHERE email = $1", [lowerEmail]).then((result) => {
+  verifyIdToken(token).then(async (user) => {
+    const claimed = String(req.headers["x-admin-email"] || "").toLowerCase();
+    if (claimed && claimed !== user.email) {
+      res.status(403).json({
+        error: "This request is signed in as one account and asking to act as another. Sign out and back in.",
+        code: "IDENTITY_MISMATCH"
+      });
+      return;
+    }
+    const email = user.email;
+    if (email === "allowancemobileapp@gmail.com" || email === "allowancemobielapp@gmail.com") {
+      req.adminEmail = email;
+      req.adminPermissions = { all: true };
+      req.authUid = user.uid;
+      next();
+      return;
+    }
+    const result = await pool.query(
+      "SELECT permissions FROM admin_users WHERE lower(email) = $1",
+      [email]
+    );
     if (result.rows.length === 0) {
-      res.status(403).json({ error: "Forbidden. Admin account not found." });
+      res.status(403).json({
+        error: "This Google account is signed in but is not an admin here.",
+        code: "NOT_AN_ADMIN"
+      });
       return;
     }
     req.adminEmail = email;
     req.adminPermissions = result.rows[0].permissions;
+    req.authUid = user.uid;
     next();
   }).catch((err) => {
-    console.error(err);
-    res.status(500).json({ error: "Internal Server Error" });
+    const expired = /expired/i.test(err.message || "");
+    console.warn("[auth] rejected:", err.message);
+    res.status(401).json({
+      error: err.message || "Could not verify this session.",
+      code: expired ? "TOKEN_EXPIRED" : "BAD_TOKEN"
+    });
   });
 }
 app.post("/api/auth/verify", async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email required" });
-    const lowerEmail = email.toLowerCase();
-    if (lowerEmail === "allowancemobileapp@gmail.com" || lowerEmail === "allowancemobielapp@gmail.com") {
-      return res.json({ verified: true, title: "Super Admin", permissions: { all: true } });
+    const token = bearerToken(req);
+    if (!token) {
+      return res.status(401).json({
+        error: "No sign-in token was sent.",
+        code: "NO_TOKEN"
+      });
     }
-    const result = await pool.query("SELECT title, permissions FROM admin_users WHERE email = $1", [lowerEmail]);
+    let user;
+    try {
+      user = await verifyIdToken(token);
+    } catch (e) {
+      return res.status(401).json({
+        error: e.message || "Could not verify that sign-in.",
+        code: "BAD_TOKEN"
+      });
+    }
+    const email = user.email;
+    if (email === "allowancemobileapp@gmail.com" || email === "allowancemobielapp@gmail.com") {
+      return res.json({
+        verified: true,
+        email,
+        title: "Super Admin",
+        permissions: { all: true }
+      });
+    }
+    const result = await pool.query(
+      "SELECT title, permissions FROM admin_users WHERE lower(email) = $1",
+      [email]
+    );
     if (result.rows.length > 0) {
-      res.json({ verified: true, title: result.rows[0].title, permissions: result.rows[0].permissions });
-    } else {
-      res.status(403).json({ error: "Unauthorized email." });
+      return res.json({
+        verified: true,
+        email,
+        title: result.rows[0].title,
+        permissions: result.rows[0].permissions
+      });
     }
+    return res.status(403).json({
+      error: "That Google account is not an admin here.",
+      code: "NOT_AN_ADMIN"
+    });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error("[auth/verify]", e);
+    res.status(500).json({ error: "Could not complete sign-in." });
   }
 });
 app.get("/api/stores", requireAdmin, async (req, res) => {
@@ -4421,17 +4607,57 @@ app.get("/api/logs/app", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+var logRate = /* @__PURE__ */ new Map();
+var LOG_WINDOW_MS = 6e4;
+var LOG_MAX_PER_WINDOW = 60;
+function logRateLimited(key) {
+  const now = Date.now();
+  const entry = logRate.get(key);
+  if (!entry || entry.resetAt < now) {
+    logRate.set(key, { count: 1, resetAt: now + LOG_WINDOW_MS });
+    if (logRate.size > 5e3) {
+      for (const [k, v] of logRate) if (v.resetAt < now) logRate.delete(k);
+    }
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > LOG_MAX_PER_WINDOW;
+}
+var clip = (v, max) => typeof v === "string" ? v.slice(0, max) : "";
 app.post("/api/logs/app", async (req, res) => {
   try {
-    const { user_email, action_summary, details } = req.body;
-    if (!user_email || !action_summary) return res.status(400).json({ error: "Missing required fields" });
+    const ip = String(req.headers["x-forwarded-for"] || req.ip || "unknown").split(",")[0].trim();
+    if (logRateLimited(ip)) {
+      return res.status(429).json({ error: "Too many log writes. Slow down." });
+    }
+    const user_email = clip(req.body?.user_email, 320);
+    const action_summary = clip(req.body?.action_summary, 500);
+    if (!user_email || !action_summary) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    let details = req.body?.details;
+    if (details === null || typeof details !== "object" || Array.isArray(details)) {
+      details = {};
+    }
+    if (JSON.stringify(details).length > 8e3) {
+      details = { truncated: true };
+    }
     const result = await pool.query(
-      "INSERT INTO system_logs (type, user_email, action_summary, details) VALUES ($1, $2, $3, $4) RETURNING *",
-      ["app", user_email, action_summary, details || {}]
+      `INSERT INTO system_logs (type, user_email, action_summary, details)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [
+        "app",
+        user_email,
+        action_summary,
+        // The stamp is the point: this row was not authenticated, and the
+        // address on it is whatever the caller typed.
+        { ...details, _unverified: true }
+      ]
     );
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[logs/app]", err);
+    res.status(500).json({ error: "Could not write the log entry." });
   }
 });
 app.get("/api/metadata/stats", requireAdmin, async (req, res) => {
@@ -4714,7 +4940,7 @@ app.post("/api/approvals/stores/:id/:action", requireAdmin, async (req, res) => 
     const credsRes = await pool.query("SELECT * FROM store_credentials WHERE store_id = $1 AND kind = 'cac'", [storeId]);
     const hasCac = credsRes.rows.length > 0 || !!store.registration_document_url;
     const isPlus = store.subscription_tier === "Membership";
-    const currentEmail = (req.headers["x-admin-email"] || "").toLowerCase();
+    const currentEmail = String(req.adminEmail || "").toLowerCase();
     if ((action === "verify" || action === "revoke") && currentEmail !== "allowancemobileapp@gmail.com") {
       return res.status(403).json({ error: "Only the root admin (allowancemobileapp@gmail.com) can verify or revoke stores." });
     }

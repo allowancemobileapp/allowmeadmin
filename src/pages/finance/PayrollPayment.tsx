@@ -5,6 +5,7 @@ import {
 import {
   Receipt, Upload, X, Paperclip, Undo2, Scale, AlertTriangle, CheckCircle2,
 } from 'lucide-react';
+import { authHeadersForUpload } from '../../hooks/useApi';
 
 const naira = (n: number) =>
   '₦' + Math.round(Number(n) || 0).toLocaleString('en-NG');
@@ -22,7 +23,7 @@ const day = (d: string | null) =>
 async function uploadFile(path: string, fd: FormData) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'x-admin-email': localStorage.getItem('admin_email') || '' },
+    headers: await authHeadersForUpload(),
     body: fd,
   });
   if (!res.ok) {

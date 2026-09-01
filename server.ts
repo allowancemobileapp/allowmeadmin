@@ -13,6 +13,7 @@ import { createFinanceV2Router } from "./server/financeV2Routes.js";
 import { createPeopleRouter } from "./server/peopleRoutes.js";
 import { createLiveRouter } from "./server/liveRoutes.js";
 import { financeGuard, liveGuard, peopleGuard } from "./server/financeAccess.js";
+import { verifyIdToken, bearerToken } from "./server/auth.js";
 
 dotenv.config();
 
@@ -20,7 +21,32 @@ import cors from "cors";
 
 const app = express();
 const PORT = 3000;
-app.use(cors());
+// Same-origin in production: the API and the admin app are served from one
+// Vercel deployment, so nothing else has any business calling it. `cors()`
+// with no arguments answers every origin on the internet, which turns any
+// page the founder happens to have open into something that can talk to the
+// accounting API on their behalf. ALLOWED_ORIGINS overrides for a split
+// deployment; localhost stays open so development still works.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map((o) => o.trim()).filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    // No Origin header at all: curl, a server-to-server call, a health check.
+    // These carry no ambient authority to abuse, so CORS is not what governs
+    // them -- the bearer token is.
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origin not allowed.'));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -173,58 +199,143 @@ async function logAppAction(user_email: string, action_summary: string, details:
 }
 
 // === Authentication Middleware (Mockable for dev) ===
+/**
+ * Who is calling, proved rather than claimed.
+ *
+ * WHAT THIS USED TO BE. It read `x-admin-email` and believed it. Anyone who
+ * knew an admin's address -- it is on the team page, it is in every email
+ * they have ever sent -- could read and write the entire accounting system
+ * with a one-line curl. The Google sign-in in front of it decided what the
+ * browser rendered and nothing more.
+ *
+ * WHAT IT IS NOW. A Firebase ID token signed by Google, verified on every
+ * request, with the email taken from the verified payload. The header is
+ * still read, but ONLY to be rejected if it disagrees -- see below.
+ */
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const email = req.headers['x-admin-email'] as string;
-  if (!email) {
-    res.status(401).json({ error: "Unauthorized. Missing x-admin-email header." });
-    return;
-  }
-  const lowerEmail = email.toLowerCase();
-  
-  // Fast path for local dev or root admin
-  if (lowerEmail === 'allowancemobileapp@gmail.com' || lowerEmail === 'allowancemobielapp@gmail.com') {
-    (req as any).adminEmail = lowerEmail;
-    next();
+  const token = bearerToken(req);
+
+  if (!token) {
+    res.status(401).json({
+      error: 'Not signed in. This request carried no authentication token.',
+      code: 'NO_TOKEN',
+    });
     return;
   }
 
-  pool.query('SELECT permissions FROM admin_users WHERE email = $1', [lowerEmail])
-    .then(result => {
-      if (result.rows.length === 0) {
-         res.status(403).json({ error: "Forbidden. Admin account not found." });
-         return;
+  verifyIdToken(token)
+    .then(async (user) => {
+      // The header is no longer trusted, but a MISMATCH is worth refusing
+      // loudly: a stale tab whose localStorage says one person while the
+      // Firebase session says another, or somebody experimenting. Either way
+      // the request does not do what its sender thinks it does.
+      const claimed = String(req.headers['x-admin-email'] || '').toLowerCase();
+      if (claimed && claimed !== user.email) {
+        res.status(403).json({
+          error: 'This request is signed in as one account and asking to act '
+               + 'as another. Sign out and back in.',
+          code: 'IDENTITY_MISMATCH',
+        });
+        return;
       }
+
+      const email = user.email;
+
+      if (email === 'allowancemobileapp@gmail.com'
+          || email === 'allowancemobielapp@gmail.com') {
+        (req as any).adminEmail = email;
+        (req as any).adminPermissions = { all: true };
+        (req as any).authUid = user.uid;
+        next();
+        return;
+      }
+
+      const result = await pool.query(
+        'SELECT permissions FROM admin_users WHERE lower(email) = $1', [email]);
+
+      if (result.rows.length === 0) {
+        res.status(403).json({
+          error: 'This Google account is signed in but is not an admin here.',
+          code: 'NOT_AN_ADMIN',
+        });
+        return;
+      }
+
       (req as any).adminEmail = email;
       (req as any).adminPermissions = result.rows[0].permissions;
+      (req as any).authUid = user.uid;
       next();
     })
-    .catch(err => {
-      console.error(err);
-      res.status(500).json({ error: "Internal Server Error" });
+    .catch((err) => {
+      // A bad token is the caller's problem, not a server fault, and saying
+      // which check failed is what lets somebody fix their own expired
+      // session instead of filing a bug.
+      const expired = /expired/i.test(err.message || '');
+      console.warn('[auth] rejected:', err.message);
+      res.status(401).json({
+        error: err.message || 'Could not verify this session.',
+        code: expired ? 'TOKEN_EXPIRED' : 'BAD_TOKEN',
+      });
     });
 }
 
 // === API ROUTES ===
 
 // Verify Admin for Login
+/**
+ * Sign-in.
+ *
+ * WHAT THIS USED TO ACCEPT. `{ email }` in a JSON body, with no proof of any
+ * kind. POSTing the founder's address returned the founder's permissions,
+ * which the client then stored and sent on every later request. It was the
+ * front door standing open next to the unlocked window.
+ *
+ * It now takes the Firebase ID token and reads the address out of it. There
+ * is no email parameter any more, because there is nothing for the caller to
+ * assert.
+ */
 app.post('/api/auth/verify', async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email required" });
-    const lowerEmail = email.toLowerCase();
-    
-    if (lowerEmail === 'allowancemobileapp@gmail.com' || lowerEmail === 'allowancemobielapp@gmail.com') {
-      return res.json({ verified: true, title: 'Super Admin', permissions: { all: true } });
+    const token = bearerToken(req);
+    if (!token) {
+      return res.status(401).json({
+        error: 'No sign-in token was sent.', code: 'NO_TOKEN' });
     }
-    
-    const result = await pool.query('SELECT title, permissions FROM admin_users WHERE email = $1', [lowerEmail]);
+
+    let user;
+    try {
+      user = await verifyIdToken(token);
+    } catch (e: any) {
+      return res.status(401).json({
+        error: e.message || 'Could not verify that sign-in.', code: 'BAD_TOKEN' });
+    }
+
+    const email = user.email;
+
+    if (email === 'allowancemobileapp@gmail.com'
+        || email === 'allowancemobielapp@gmail.com') {
+      return res.json({
+        verified: true, email, title: 'Super Admin', permissions: { all: true } });
+    }
+
+    const result = await pool.query(
+      'SELECT title, permissions FROM admin_users WHERE lower(email) = $1',
+      [email]);
+
     if (result.rows.length > 0) {
-      res.json({ verified: true, title: result.rows[0].title, permissions: result.rows[0].permissions });
-    } else {
-      res.status(403).json({ error: "Unauthorized email." });
+      return res.json({
+        verified: true,
+        email,
+        title: result.rows[0].title,
+        permissions: result.rows[0].permissions,
+      });
     }
+
+    return res.status(403).json({
+      error: 'That Google account is not an admin here.', code: 'NOT_AN_ADMIN' });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error('[auth/verify]', e);
+    res.status(500).json({ error: 'Could not complete sign-in.' });
   }
 });
 
@@ -424,16 +535,85 @@ app.get('/api/logs/app', requireAdmin, async (req, res) => {
 
 // App endpoint for external app to POST logs
 // We do not require requireAdmin here because it's called by the public app
+/**
+ * Activity logging from the mobile app.
+ *
+ * DELIBERATELY UNAUTHENTICATED, because the mobile app writes here and does
+ * not hold an admin token. That means anyone can post to it, so three things
+ * are true and are handled rather than hoped about:
+ *
+ *   1. The email on a row is a CLAIM, not an identity. Rows written here are
+ *      stamped unverified in their details so nothing downstream can mistake
+ *      one for an audited admin action. finance_audit is the trail that
+ *      matters, and it is written only behind requireAdmin.
+ *   2. Fields are bounded, so a long payload cannot be used to bloat the
+ *      table or push something unreadable into the log viewer.
+ *   3. It is rate limited per address, so it cannot be used to flood.
+ */
+const logRate = new Map<string, { count: number; resetAt: number }>();
+const LOG_WINDOW_MS = 60_000;
+const LOG_MAX_PER_WINDOW = 60;
+
+function logRateLimited(key: string): boolean {
+  const now = Date.now();
+  const entry = logRate.get(key);
+
+  if (!entry || entry.resetAt < now) {
+    logRate.set(key, { count: 1, resetAt: now + LOG_WINDOW_MS });
+    // Serverless instances are short-lived, but a warm one should not grow a
+    // map forever. Cheapest possible sweep: drop expired keys on write.
+    if (logRate.size > 5000) {
+      for (const [k, v] of logRate) if (v.resetAt < now) logRate.delete(k);
+    }
+    return false;
+  }
+
+  entry.count += 1;
+  return entry.count > LOG_MAX_PER_WINDOW;
+}
+
+const clip = (v: any, max: number) =>
+  typeof v === 'string' ? v.slice(0, max) : '';
+
 app.post('/api/logs/app', async (req, res) => {
   try {
-    const { user_email, action_summary, details } = req.body;
-    if (!user_email || !action_summary) return res.status(400).json({ error: 'Missing required fields' });
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || 'unknown')
+      .split(',')[0].trim();
+
+    if (logRateLimited(ip)) {
+      return res.status(429).json({ error: 'Too many log writes. Slow down.' });
+    }
+
+    const user_email = clip(req.body?.user_email, 320);
+    const action_summary = clip(req.body?.action_summary, 500);
+
+    if (!user_email || !action_summary) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Bounded, and only ever an object. A giant or non-object payload is the
+    // easy way to make a log table expensive.
+    let details: any = req.body?.details;
+    if (details === null || typeof details !== 'object' || Array.isArray(details)) {
+      details = {};
+    }
+    if (JSON.stringify(details).length > 8000) {
+      details = { truncated: true };
+    }
+
     const result = await pool.query(
-      'INSERT INTO system_logs (type, user_email, action_summary, details) VALUES ($1, $2, $3, $4) RETURNING *',
-      ['app', user_email, action_summary, details || {}]
+      `INSERT INTO system_logs (type, user_email, action_summary, details)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      ['app', user_email, action_summary,
+       // The stamp is the point: this row was not authenticated, and the
+       // address on it is whatever the caller typed.
+       { ...details, _unverified: true }]
     );
     res.json(result.rows[0]);
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) {
+    console.error('[logs/app]', err);
+    res.status(500).json({ error: 'Could not write the log entry.' });
+  }
 });
 
 // -- Metadata Stats --
@@ -756,7 +936,10 @@ app.post('/api/approvals/stores/:id/:action', requireAdmin, async (req, res) => 
     const hasCac = credsRes.rows.length > 0 || !!store.registration_document_url;
     const isPlus = store.subscription_tier === 'Membership';
 
-    const currentEmail = (req.headers['x-admin-email'] as string || '').toLowerCase();
+    // From the verified token, not the header. This gates who may verify or
+    // revoke a store, and reading it off a header meant the check could be
+    // passed by typing the root admin's address into one.
+    const currentEmail = String((req as any).adminEmail || '').toLowerCase();
     
     if ((action === 'verify' || action === 'revoke') && currentEmail !== 'allowancemobileapp@gmail.com') {
       return res.status(403).json({ error: "Only the root admin (allowancemobileapp@gmail.com) can verify or revoke stores." });

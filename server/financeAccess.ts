@@ -21,11 +21,11 @@ import type { Request, Response, NextFunction } from "express";
  * ANY of them. Mapping each path to a single screen would mean granting
  * Record in order to see the overview.
  *
- * WHAT THIS IS NOT. It is authorisation, not authentication. It trusts
- * req.adminEmail, which requireAdmin takes from the x-admin-email header --
- * so it stops a granted account reaching past its grant, and does not stop
- * anyone willing to type somebody else's address into a header. That is a
- * separate and still-open problem.
+ * WHAT THIS IS NOT. It is authorisation, not authentication. It reads
+ * req.adminEmail, which requireAdmin now takes from a Firebase ID token
+ * verified against Google's public keys on every request -- so the identity
+ * it acts on is proved rather than claimed, and this decides only what that
+ * proved identity is allowed to reach.
  */
 
 export type Rule = { test: RegExp; screens: string[] };

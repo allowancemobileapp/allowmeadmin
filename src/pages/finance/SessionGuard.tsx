@@ -11,14 +11,11 @@ import { auth, loginWithGoogle } from '../../firebase';
  * for more than it is: an unattended laptop, and a shoulder-surfer. It is a
  * real protection for the realistic threat.
  *
- * WHAT IT DOES NOT DEFEND AGAINST: anyone calling the API directly. The
- * server's requireAdmin trusts an `x-admin-email` HEADER with no token
- * verification, so a curl request carrying an admin's email address reaches
- * every one of these endpoints regardless of what this component does.
- *
- * The spec is right that the UI can be bypassed. Until requireAdmin verifies
- * a Firebase ID token, this is a lock on a door in a wall that has a hole in
- * it. See the note in the module README.
+ * WHAT IT DOES NOT DEFEND AGAINST: anyone calling the API directly. That is
+ * requireAdmin's job, and it now does it properly -- every request carries a
+ * Firebase ID token verified against Google's public keys, and the email is
+ * read from the signature rather than from a header the caller wrote. This
+ * component is the lock on the laptop; that is the lock on the door.
  */
 
 const IDLE_MS = 30 * 60 * 1000;

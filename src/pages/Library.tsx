@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authHeadersForUpload } from '../hooks/useApi';
 import { useApi } from '../hooks/useApi';
 import { BookOpen, Folder, File, Zap } from 'lucide-react';
 
@@ -128,34 +129,34 @@ export default function Library() {
     
     setIsUploading(true);
     try {
-      const supabaseUrl = 'https://quuazutreaitqoquzolg.supabase.co';
-      const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1dWF6dXRyZWFpdHFvcXV6b2xnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDA4OTYxOCwiZXhwIjoyMDU5NjY1NjE4fQ.pQoriaaK_dG1Z9nQUWdCYvFtugulM7ir9OjTukIhDGs';
-      
-      const fileName = `${Date.now()}_${materialFile.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      
-      const uploadRes = await fetch(`${supabaseUrl}/storage/v1/object/library-materials/${fileName}`, {
+      // THE SERVICE ROLE KEY USED TO BE RIGHT HERE, IN THE BROWSER BUNDLE.
+      // It is a master credential -- it bypasses every row-level policy in
+      // the Supabase project -- and it shipped to anyone who opened the admin
+      // app or simply downloaded the JavaScript. The upload now goes through
+      // /api/library/upload, which holds the key server-side and is itself
+      // behind the admin token.
+      const fd = new FormData();
+      fd.append('file', materialFile);
+
+      const uploadRes = await fetch('/api/library/upload', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${supabaseKey}`,
-          'apiKey': supabaseKey,
-          'Content-Type': materialFile.type || 'application/octet-stream'
-        },
-        body: materialFile
+        headers: await authHeadersForUpload(),
+        body: fd,
       });
-      
+
       if (!uploadRes.ok) {
-        let errorMsg = "Failed to upload file to storage.";
-        const cType = uploadRes.headers.get("content-type");
-        if (cType && cType.includes("application/json")) {
-           const errorData = await uploadRes.json();
-           errorMsg = errorData.error || errorData.message || errorMsg;
+        const cType = uploadRes.headers.get('content-type');
+        let errorMsg = 'Failed to upload the file.';
+        if (cType && cType.includes('application/json')) {
+          const errorData = await uploadRes.json().catch(() => ({}));
+          errorMsg = errorData.error || errorMsg;
         } else {
-           errorMsg = await uploadRes.text();
+          errorMsg = await uploadRes.text();
         }
         throw new Error(errorMsg);
       }
-      
-      const url = `${supabaseUrl}/storage/v1/object/public/library-materials/${fileName}`;
+
+      const { url } = await uploadRes.json();
 
       const createdMaterial = await post<any>('/api/library/library_materials', { 
         course_id: parseInt(selectedCourse), 

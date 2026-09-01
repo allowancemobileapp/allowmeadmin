@@ -39,9 +39,19 @@ export function createLibraryRouter(pool: Pool) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    // FROM THE ENVIRONMENT, NEVER FROM SOURCE. This key was previously
+    // written out in full here and in the client bundle. It is a master
+    // credential that bypasses every row-level policy in the project, so the
+    // one that was committed must be treated as burned and rotated in the
+    // Supabase dashboard -- removing it from the code does not un-publish it.
     const { createClient } = await import('@supabase/supabase-js');
-    const supabaseUrl = 'https://quuazutreaitqoquzolg.supabase.co';
-    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1dWF6dXRyZWFpdHFvcXV6b2xnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDA4OTYxOCwiZXhwIjoyMDU5NjY1NjE4fQ.pQoriaaK_dG1Z9nQUWdCYvFtugulM7ir9OjTukIhDGs';
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error(
+        'File storage is not configured. Set SUPABASE_URL and '
+        + 'SUPABASE_SERVICE_ROLE_KEY in the environment.');
+    }
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const fileName = `${Date.now()}_${req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
@@ -320,12 +330,33 @@ export function createLibraryRouter(pool: Pool) {
         // Clear existing questions for this material first
         await pool.query('DELETE FROM quiz_questions WHERE material_id = $1', [material_id]);
 
-        // Bulk insert
-        const values = questions.map((q: any) => 
-          `(${course_id}, ${material_id}, '${q.question_text.replace(/'/g, "''")}', '${q.option_a.replace(/'/g, "''")}', '${q.option_b.replace(/'/g, "''")}', '${q.option_c.replace(/'/g, "''")}', '${q.correct_option}')`
+        // PARAMETERISED. This used to concatenate the values straight into
+        // the SQL string, hand-escaping three of the seven with a
+        // replace(/'/g, "''") and leaving correct_option, course_id and
+        // material_id raw. Two things made that genuinely dangerous rather
+        // than merely untidy: course_id and material_id come from the request
+        // body, and the question text comes from a language model, which is
+        // to say from whatever text was in the uploaded document. A PDF
+        // containing the right quote character could rewrite this statement.
+        //
+        // Nothing is escaped here because nothing is interpolated. The values
+        // travel beside the query, and the driver never parses them as SQL.
+        const cols = 7;
+        const placeholders = questions.map((_: any, i: number) =>
+          `(${Array.from({ length: cols }, (_, c) => `$${i * cols + c + 1}`).join(',')})`
         ).join(',');
 
-        const result = await pool.query(`INSERT INTO quiz_questions (course_id, material_id, question_text, option_a, option_b, option_c, correct_option) VALUES ${values} RETURNING *`);
+        const params = questions.flatMap((q: any) => [
+          course_id, material_id,
+          String(q.question_text ?? ''), String(q.option_a ?? ''),
+          String(q.option_b ?? ''), String(q.option_c ?? ''),
+          String(q.correct_option ?? ''),
+        ]);
+
+        const result = await pool.query(
+          `INSERT INTO quiz_questions (course_id, material_id, question_text,
+             option_a, option_b, option_c, correct_option)
+           VALUES ${placeholders} RETURNING *`, params);
         await logAdminAction(req, `Generated ${questions.length} quiz questions for material ${material_id}`, { course_id, count: questions.length });
         return res.json(result.rows);
       }
