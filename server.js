@@ -1100,14 +1100,46 @@ function createFinanceRouter(pool2) {
     res.json(r.rows[0]);
   }));
   router.post("/expenses", handleReq(async (req, res) => {
-    const { title, reason, category, amount, expense_date, vendor } = req.body;
+    const {
+      title,
+      reason,
+      category,
+      amount,
+      expense_date,
+      vendor,
+      person_id
+    } = req.body;
     if (!title || !amount) {
       return res.status(400).json({ error: "A title and an amount are required." });
     }
+    if (category === "payroll" && person_id) {
+      const open = await pool2.query(
+        `SELECT payroll_run_id, month, outstanding
+           FROM payroll_outstanding WHERE shareholder_id = $1
+           ORDER BY month`,
+        [person_id]
+      );
+      if (open.rows.length > 0) {
+        const months = open.rows.map((o) => new Date(o.month).toLocaleDateString(
+          "en-NG",
+          { month: "long", year: "numeric" }
+        )).join(", ");
+        return res.status(409).json({
+          error: `That person still has unpaid payroll for ${months}. Record it against the month so the payroll register clears too -- logging it here would take the money out of the books and still show them as owed.`,
+          code: "USE_PAYROLL",
+          outstanding: open.rows.map((o) => ({
+            payroll_run_id: o.payroll_run_id,
+            month: o.month,
+            outstanding: Number(o.outstanding)
+          }))
+        });
+      }
+    }
     const r = await pool2.query(
       `INSERT INTO company_expenses
-         (title, reason, category, amount, expense_date, vendor, approved_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+         (title, reason, category, amount, expense_date, vendor, person_id,
+          approved_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [
         title,
         reason || category || "Uncategorised",
@@ -1115,11 +1147,45 @@ function createFinanceRouter(pool2) {
         amount,
         expense_date || (/* @__PURE__ */ new Date()).toISOString(),
         vendor || null,
+        person_id || null,
         req.adminEmail
       ]
     );
-    await logAdminAction2(req, "finance.expense.add", { title, amount });
+    await logAdminAction2(req, "finance.expense.add", { title, amount, person_id });
     res.status(201).json(r.rows[0]);
+  }));
+  router.get("/payroll/people", handleReq(async (_req, res) => {
+    const [people, outstanding] = await Promise.all([
+      pool2.query(`
+        SELECT s.id, s.full_name, s.role_title, s.staff_role,
+               s.is_founder, s.employment_status,
+               (ps.shareholder_id IS NOT NULL) AS on_payroll
+        FROM shareholders s
+        LEFT JOIN pay_scales ps ON ps.shareholder_id = s.id
+        WHERE s.exited_on IS NULL
+        ORDER BY s.full_name`),
+      pool2.query("SELECT * FROM payroll_outstanding")
+    ]);
+    const byPerson = {};
+    for (const o of outstanding.rows) {
+      (byPerson[o.shareholder_id] ||= []).push({
+        payroll_run_id: o.payroll_run_id,
+        month: o.month,
+        cash_due: Number(o.cash_due),
+        cash_paid: Number(o.cash_paid),
+        outstanding: Number(o.outstanding),
+        overdue: o.overdue
+      });
+    }
+    res.json(people.rows.map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      role_title: p.role_title || p.staff_role || null,
+      on_payroll: p.on_payroll,
+      is_founder: p.is_founder,
+      outstanding: byPerson[p.id] || [],
+      total_outstanding: (byPerson[p.id] || []).reduce((a, m) => a + m.outstanding, 0)
+    })));
   }));
   router.get("/investments", handleReq(async (_req, res) => {
     const r = await pool2.query(
@@ -4011,6 +4077,17 @@ var FINANCE_RULES = [
   // -- Gross profit --------------------------------------------------------
   { test: /^\/gross-profit(\/|$)/, screens: ["grossprofit"] },
   // -- Payroll -------------------------------------------------------------
+  //
+  // THESE TWO COME FIRST, and the order matters -- the first matching rule
+  // wins, so the broad /payroll rule below would otherwise swallow them.
+  //
+  // Recording a salary payment is a Record-screen job as much as a Payroll
+  // one: the Record tab is where somebody logging the day's spending goes,
+  // and sending them anywhere else is what produced the loose untagged salary
+  // expenses in the first place. Both screens can reach the person list and
+  // the payment endpoint; neither can read the register without 'payroll'.
+  { test: /^\/payroll\/people(\/|$)/, screens: ["payroll", "record"] },
+  { test: /^\/payroll\/[^/]+\/pay(\/|$)/, screens: ["payroll", "record"] },
   // /reconciliation lives here because the bank comparison is only meaningful
   // to somebody who can already see what left the account in wages.
   {
@@ -4190,7 +4267,11 @@ async function verifyIdToken(token) {
     uid: payload.sub,
     email: String(payload.email).toLowerCase(),
     emailVerified: payload.email_verified === true,
-    signInProvider: provider
+    signInProvider: provider,
+    // Falls back to iat rather than to 0: a token with no auth_time is not
+    // evidence of a sign-in an infinite time ago, it is just a token that did
+    // not carry the claim.
+    authTime: typeof payload.auth_time === "number" ? payload.auth_time : payload.iat
   };
 }
 function bearerToken(req) {
@@ -4198,6 +4279,252 @@ function bearerToken(req) {
   if (!raw || typeof raw !== "string") return null;
   const m = /^Bearer\s+(.+)$/i.exec(raw.trim());
   return m ? m[1].trim() : null;
+}
+
+// server/undoRoutes.ts
+import { Router as Router7 } from "express";
+function createUndoRouter(pool2) {
+  const router = Router7();
+  const SUPER_ADMINS2 = [
+    "allowancemobileapp@gmail.com",
+    "allowancemobielapp@gmail.com"
+  ];
+  const REAUTH_WINDOW_SECONDS = 5 * 60;
+  const handle = (fn) => async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (e) {
+      console.error("[undo]", e);
+      res.status(400).json({ error: e.message });
+    }
+  };
+  const ENTITIES = {
+    expense: {
+      table: "company_expenses",
+      label: "Expense",
+      idType: "int",
+      describe: (r) => `${r.title} \u2014 N${Number(r.amount).toLocaleString("en-NG")}`
+    },
+    revenue: {
+      table: "revenue_entries",
+      label: "Revenue",
+      idType: "uuid",
+      describe: (r) => `${r.stream} \u2014 N${(Number(r.gross_collected) / 100).toLocaleString("en-NG")}`
+    },
+    capital: {
+      table: "capital_events",
+      label: "Capital in",
+      idType: "uuid",
+      describe: (r) => `${r.kind} from ${r.counterparty || "unnamed"} \u2014 N${(Number(r.amount) / 100).toLocaleString("en-NG")}`
+    },
+    investment: {
+      table: "company_investments",
+      label: "Investment",
+      idType: "uuid",
+      describe: (r) => `${r.title} \u2014 N${Number(r.amount).toLocaleString("en-NG")}`
+    },
+    liability: {
+      table: "company_liabilities",
+      label: "Money owed",
+      idType: "uuid",
+      describe: (r) => `${r.title} \u2014 N${Number(r.amount).toLocaleString("en-NG")}`
+    },
+    valuation: {
+      table: "company_valuations",
+      label: "Valuation",
+      idType: "uuid",
+      describe: (r) => `N${Number(r.amount).toLocaleString("en-NG")} on ${r.valued_on}`
+    }
+  };
+  const audit = async (req, action, entity, id, before, after) => {
+    try {
+      await pool2.query(
+        `INSERT INTO finance_audit (actor, action, entity, entity_id, before, after)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          req.adminEmail || "unknown",
+          action,
+          entity,
+          id,
+          before ? JSON.stringify(before) : null,
+          after ? JSON.stringify(after) : null
+        ]
+      );
+    } catch (e) {
+      console.error("audit write failed", e);
+    }
+  };
+  const superAdminReauthed = (fn) => handle(async (req, res) => {
+    const email = String(req.adminEmail || "").toLowerCase();
+    if (!SUPER_ADMINS2.includes(email)) {
+      return res.status(403).json({
+        error: "Only the super admin can delete or restore a record. Everyone else can add one and ask for it to be reversed.",
+        code: "NOT_SUPER_ADMIN"
+      });
+    }
+    const authTime = Number(req.authTime || 0);
+    const age = Math.floor(Date.now() / 1e3) - authTime;
+    if (!authTime || age > REAUTH_WINDOW_SECONDS) {
+      return res.status(401).json({
+        error: "Confirm it is you before deleting anything. This needs a sign-in from the last five minutes.",
+        code: "REAUTH_REQUIRED",
+        // The client uses this to say how stale the session is rather than
+        // just asserting that it is.
+        signed_in_seconds_ago: authTime ? age : null
+      });
+    }
+    await fn(req, res);
+  });
+  router.get("/entities", handle(async (_req, res) => {
+    res.json(Object.entries(ENTITIES).map(([id, e]) => ({
+      id,
+      label: e.label
+    })));
+  }));
+  router.delete("/:entity/:id", superAdminReauthed(async (req, res) => {
+    const meta = ENTITIES[req.params.entity];
+    if (!meta) {
+      return res.status(400).json({ error: "That kind of record cannot be deleted here." });
+    }
+    const id = req.params.id;
+    if (meta.idType === "int" && !/^\d+$/.test(id)) {
+      return res.status(400).json({ error: "Not a valid record id." });
+    }
+    if (meta.idType === "uuid" && !/^[0-9a-f-]{36}$/i.test(id)) {
+      return res.status(400).json({ error: "Not a valid record id." });
+    }
+    const client = await pool2.connect();
+    try {
+      await client.query("BEGIN");
+      const found = await client.query(
+        `SELECT * FROM public.${meta.table} WHERE id = $1 FOR UPDATE`,
+        [id]
+      );
+      if (found.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "That record no longer exists." });
+      }
+      const row = found.rows[0];
+      if (meta.table === "company_expenses") {
+        const linked = await client.query(
+          "SELECT id FROM payroll_payments WHERE expense_id = $1 AND voided_at IS NULL",
+          [id]
+        );
+        if (linked.rows.length > 0) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: "That expense was created by a payroll payment. Reverse the payment on the Payroll screen instead \u2014 that puts back what the person is owed as well as the money.",
+            code: "LINKED_TO_PAYROLL"
+          });
+        }
+      }
+      const kept = await client.query(
+        `INSERT INTO deleted_records
+           (entity, entity_id, payload, description, deleted_by, reason)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [
+          req.params.entity,
+          String(id),
+          JSON.stringify(row),
+          meta.describe(row),
+          req.adminEmail,
+          req.body?.reason || null
+        ]
+      );
+      await client.query(`DELETE FROM public.${meta.table} WHERE id = $1`, [id]);
+      await client.query("COMMIT");
+      await audit(req, "record.delete", meta.table, String(id), row, null);
+      res.json({
+        deleted: true,
+        entity: req.params.entity,
+        description: meta.describe(row),
+        undo_id: kept.rows[0].id
+      });
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {
+      });
+      throw e;
+    } finally {
+      client.release();
+    }
+  }));
+  router.get("/deleted", handle(async (req, res) => {
+    const email = String(req.adminEmail || "").toLowerCase();
+    if (!SUPER_ADMINS2.includes(email)) {
+      return res.status(403).json({
+        error: "Only the super admin can see deleted records."
+      });
+    }
+    const r = await pool2.query(`
+      SELECT id, entity, entity_id, description, deleted_by, deleted_at,
+             reason, restored_by, restored_at
+      FROM deleted_records
+      ORDER BY deleted_at DESC LIMIT 100`);
+    res.json(r.rows.map((d) => ({
+      ...d,
+      label: ENTITIES[d.entity]?.label || d.entity
+    })));
+  }));
+  router.post(
+    "/deleted/:id/restore",
+    superAdminReauthed(async (req, res) => {
+      const found = await pool2.query(
+        "SELECT * FROM deleted_records WHERE id = $1",
+        [req.params.id]
+      );
+      if (!found.rows[0]) throw new Error("No such deleted record.");
+      const rec = found.rows[0];
+      if (rec.restored_at) {
+        return res.status(409).json({
+          error: `That was already restored on ${new Date(rec.restored_at).toLocaleDateString("en-NG")}.`
+        });
+      }
+      const meta = ENTITIES[rec.entity];
+      if (!meta) throw new Error("That kind of record can no longer be restored.");
+      const payload = rec.payload || {};
+      const cols = Object.keys(payload);
+      if (cols.length === 0) throw new Error("Nothing was stored to restore.");
+      const columnList = cols.map((c) => `"${c.replace(/"/g, '""')}"`).join(", ");
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+      const values = cols.map((c) => payload[c]);
+      const client = await pool2.connect();
+      try {
+        await client.query("BEGIN");
+        const back = await client.query(
+          `INSERT INTO public.${meta.table} (${columnList})
+           VALUES (${placeholders}) RETURNING *`,
+          values
+        );
+        await client.query(
+          `UPDATE deleted_records SET restored_by = $1, restored_at = now()
+           WHERE id = $2`,
+          [req.adminEmail, req.params.id]
+        );
+        await client.query("COMMIT");
+        await audit(
+          req,
+          "record.restore",
+          meta.table,
+          String(rec.entity_id),
+          null,
+          back.rows[0]
+        );
+        res.json({ restored: true, description: rec.description });
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {
+        });
+        if (e.code === "23505") {
+          throw new Error(
+            "A record with that id already exists \u2014 it looks like this was already put back another way."
+          );
+        }
+        throw e;
+      } finally {
+        client.release();
+      }
+    })
+  );
+  return router;
 }
 
 // server.ts
@@ -4352,6 +4679,7 @@ function requireAdmin(req, res, next) {
       req.adminEmail = email;
       req.adminPermissions = { all: true };
       req.authUid = user.uid;
+      req.authTime = user.authTime;
       next();
       return;
     }
@@ -4369,6 +4697,7 @@ function requireAdmin(req, res, next) {
     req.adminEmail = email;
     req.adminPermissions = result.rows[0].permissions;
     req.authUid = user.uid;
+    req.authTime = user.authTime;
     next();
   }).catch((err) => {
     const expired = /expired/i.test(err.message || "");
@@ -4488,6 +4817,7 @@ app.use("/api/finance", requireAdmin, financeGuard, createFinanceRouter(pool));
 app.use("/api/finance", requireAdmin, financeGuard, createFinanceV2Router(pool));
 app.use("/api/people", requireAdmin, peopleGuard, createPeopleRouter(pool));
 app.use("/api/live", requireAdmin, liveGuard, createLiveRouter(pool));
+app.use("/api/undo", requireAdmin, createUndoRouter(pool));
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM company_expenses ORDER BY expense_date DESC");

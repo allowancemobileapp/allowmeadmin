@@ -13,7 +13,8 @@ import {
 } from 'lucide-react';
 import {
   Card, Stat, Field, Empty, Note, Th, Td,
-  fmtNaira, pct, shares, inputCls, btnCls,
+  fmtNaira, fmtKobo, pct, shares, inputCls, btnCls,
+  Picker,
 } from './finance/ui';
 import {
   GrossProfitTab, PayrollTab, MilestonesTab, StakeholderTab,
@@ -24,6 +25,7 @@ import { PeopleTab } from './finance/PeopleTab';
 import { LiveSplitTab } from './finance/LiveSplit';
 import { SchoolsTab } from './finance/SchoolsTab';
 import { SharePrice } from './finance/SharePrice';
+import { DeleteRecords } from './finance/DeleteRecords';
 import { InvestorPicker } from './finance/Investors';
 
 /**
@@ -499,6 +501,10 @@ function CapTableView({ data, get, post, role, onDone }: any) {
           </table>
         </div>
       </Card>
+
+      {/* Undoing a mistake. Super-admin only and it wants a fresh sign-in;
+          both are checked on the server, not here. */}
+      <DeleteRecords get={get} post={post} />
     </div>
   );
 }
@@ -680,11 +686,42 @@ function RecordTab({ post, get, onDone }: any) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [cats, setCats] = useState<any[]>([]);
+  const [people, setPeople] = useState<any[]>([]);
   const [form, setForm] = useState<any>({ date: new Date().toISOString().slice(0, 10) });
+  // Who this expense was paid to. null, a picked person, or free text.
+  const [payee, setPayee] = useState<any>(null);
+  const [runId, setRunId] = useState<string>('');
 
   useEffect(() => {
     get('/api/finance/expense-categories').then(setCats).catch(() => {});
+    get('/api/finance/payroll/people').then(setPeople).catch(() => setPeople([]));
   }, []);
+
+  const isSalary = kind === 'expense' && form.category === 'payroll';
+  const picked = payee?.mode === 'picked'
+    ? people.find((pp: any) => pp.id === payee.id) : null;
+  const openMonths = picked?.outstanding || [];
+  const chosenMonth = openMonths.find((m: any) => m.payroll_run_id === runId);
+
+  // Picking a person with an open month switches this form from writing a
+  // loose expense to settling that month. The amount follows the month, so
+  // the common case is one click and no typing.
+  useEffect(() => {
+    if (openMonths.length === 1) setRunId(openMonths[0].payroll_run_id);
+    else if (!openMonths.some((m: any) => m.payroll_run_id === runId)) setRunId('');
+  }, [picked?.id, openMonths.length]);
+
+  useEffect(() => {
+    if (chosenMonth) {
+      setForm((f: any) => ({
+        ...f,
+        amount: String(Math.round(chosenMonth.outstanding / 100)),
+        title: f.title || `Salary — ${picked.full_name} — ${new Date(
+          chosenMonth.month).toLocaleDateString('en-NG',
+            { month: 'long', year: 'numeric' })}`,
+      }));
+    }
+  }, [runId]);
 
   const KINDS = [
     { id: 'expense',    label: 'Expense',    hint: 'Money spent. Some categories reduce Monthly Gross Profit — the form says which.' },
@@ -703,9 +740,37 @@ function RecordTab({ post, get, onDone }: any) {
       const k = (v: any) => Math.round(Number(v || 0) * 100);
 
       if (kind === 'expense') {
+        // A salary against an open payroll month is NOT a loose expense. It
+        // goes through the payroll endpoint, which settles the month and
+        // writes the expense in one transaction -- so the register clears and
+        // the money is counted once. Writing it here instead is exactly the
+        // bug this replaced: the cash left the books and the staff member
+        // still showed as owed in full.
+        if (isSalary && chosenMonth) {
+          await post(`/api/finance/payroll/${chosenMonth.payroll_run_id}/pay`, {
+            amount: Math.round(Number(form.amount) * 100),
+            paid_on: form.date,
+            method: form.method || 'bank_transfer',
+            reference: form.reference || null,
+            note: form.note || null,
+          });
+          setMsg('Recorded. The payroll register is settled for that month, '
+               + 'and the expense is in the books.');
+          setForm({ date: new Date().toISOString().slice(0, 10) });
+          setPayee(null); setRunId('');
+          onDone();
+          return;
+        }
+
         await post('/api/finance/expenses', {
           title: form.title, reason: form.category, category: form.category,
-          amount: Number(form.amount), expense_date: form.date });
+          amount: Number(form.amount), expense_date: form.date,
+          // Tagged where we know who it is, so a payment can be traced to a
+          // person rather than to a sentence somebody typed.
+          person_id: payee?.mode === 'picked' ? payee.id : null,
+          vendor: payee?.mode === 'other' ? payee.text
+                : payee?.mode === 'picked' ? payee.label : null,
+        });
       } else if (kind === 'revenue') {
         await post('/api/finance/revenue', {
           stream: form.stream || 'other', collected_on: form.date,
@@ -745,7 +810,10 @@ function RecordTab({ post, get, onDone }: any) {
       <Card className="p-5">
         <div className="flex flex-wrap gap-2 mb-2">
           {KINDS.map((k) => (
-            <button key={k.id} onClick={() => { setKind(k.id); setMsg(null); setErr(null); }}
+            <button key={k.id} onClick={() => {
+                setKind(k.id); setMsg(null); setErr(null);
+                setPayee(null); setRunId('');
+              }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
                 kind === k.id ? 'bg-indigo-600 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}>
@@ -786,6 +854,113 @@ function RecordTab({ post, get, onDone }: any) {
                   </button>
                 ))}
               </div>
+            </Field>
+          )}
+
+          {/* Salaries get a person, not a sentence. THE WHOLE POINT: a typed
+              name is a string and cannot be joined to a payroll line, which
+              is why a salary logged here used to leave the register showing
+              the person still owed. */}
+          {isSalary && (
+            <>
+              <Field label="Who was paid"
+                     hint="Pick the person so the payroll register updates. Type a name only for somebody who is not on the register.">
+                <Picker
+                  value={payee}
+                  onChange={(v: any) => { setPayee(v); setRunId(''); }}
+                  placeholder="Choose the person…"
+                  otherLabel="Someone not on the register (contractor, one-off)"
+                  otherPlaceholder="Type their name"
+                  options={people.map((pp: any) => ({
+                    id: pp.id,
+                    label: pp.full_name,
+                    sub: pp.total_outstanding > 0
+                      ? `${fmtKobo(pp.total_outstanding)} owed`
+                      : (pp.role_title || (pp.on_payroll ? 'on payroll' : 'no payroll')),
+                    ...pp,
+                  }))} />
+              </Field>
+
+              {picked && openMonths.length > 0 && (
+                <Field label="Which month is this paying"
+                       hint="The amount fills in from what that month still owes.">
+                  <select className={inputCls} value={runId}
+                          onChange={(e) => setRunId(e.target.value)}>
+                    <option value="">Choose a month…</option>
+                    {openMonths.map((m: any) => (
+                      <option key={m.payroll_run_id} value={m.payroll_run_id}>
+                        {new Date(m.month).toLocaleDateString('en-NG',
+                          { month: 'long', year: 'numeric' })}
+                        {' — '}{fmtKobo(m.outstanding)} owed
+                        {m.overdue ? ' (overdue)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+
+              {picked && openMonths.length === 0 && (
+                <Note tone="slate">
+                  {picked.full_name} has nothing outstanding on the payroll
+                  register, so this will be logged as an ordinary expense
+                  tagged to them &mdash; a bonus, a reimbursement, or a
+                  payment outside the salary bands.
+                </Note>
+              )}
+
+              {chosenMonth && (
+                <>
+                  <Note tone="indigo" title="This settles the payroll month.">
+                    Recording it here does exactly what the Payroll screen
+                    does: clears what {picked.full_name} is owed for that
+                    month and writes the expense, once. You can attach the
+                    receipt afterwards from Payroll.
+                  </Note>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="How">
+                      <select className={inputCls} value={form.method || 'bank_transfer'}
+                              onChange={(e) => setForm({ ...form, method: e.target.value })}>
+                        <option value="bank_transfer">Bank transfer</option>
+                        <option value="cash">Cash</option>
+                        <option value="cheque">Cheque</option>
+                        <option value="ussd">USSD</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </Field>
+                    <Field label="Reference"
+                           hint="So it can be traced to a bank statement.">
+                      <input className={inputCls} value={form.reference || ''}
+                             onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+                    </Field>
+                  </div>
+                </>
+              )}
+
+              {picked && openMonths.length > 0 && !chosenMonth && (
+                <Note tone="amber" title="Pick the month.">
+                  {picked.full_name} is owed {fmtKobo(picked.total_outstanding)}.
+                  Saving without choosing a month would take the money out of
+                  the books and still leave the register saying they are owed
+                  it &mdash; so the server refuses it.
+                </Note>
+              )}
+            </>
+          )}
+
+          {/* Not a salary, but still worth knowing who got the money. */}
+          {kind === 'expense' && !isSalary && form.category && (
+            <Field label="Paid to (optional)"
+                   hint="Tagging a person makes this traceable to them later.">
+              <Picker
+                value={payee}
+                onChange={setPayee}
+                placeholder="Nobody in particular / a supplier"
+                otherLabel="Type a supplier or name"
+                otherPlaceholder="Who was paid"
+                options={people.map((pp: any) => ({
+                  id: pp.id, label: pp.full_name,
+                  sub: pp.role_title || undefined,
+                }))} />
             </Field>
           )}
 
@@ -883,8 +1058,14 @@ function RecordTab({ post, get, onDone }: any) {
           {msg && <p className="text-sm text-emerald-600">{msg}</p>}
 
           <button onClick={submit} className={btnCls}
-                  disabled={busy || !form.amount || (needsTitle && !form.title)}>
-            {busy ? 'Saving…' : `Save ${active.label.toLowerCase()}`}
+                  disabled={busy || !form.amount || (needsTitle && !form.title)
+                            || (isSalary && !!picked && openMonths.length > 0
+                                && !chosenMonth)}>
+            {busy ? 'Saving…'
+              : chosenMonth
+                ? `Record payment and clear ${new Date(chosenMonth.month)
+                    .toLocaleDateString('en-NG', { month: 'long' })}`
+                : `Save ${active.label.toLowerCase()}`}
           </button>
         </div>
       </Card>

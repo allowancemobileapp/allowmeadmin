@@ -14,6 +14,7 @@ import { createPeopleRouter } from "./server/peopleRoutes.js";
 import { createLiveRouter } from "./server/liveRoutes.js";
 import { financeGuard, liveGuard, peopleGuard } from "./server/financeAccess.js";
 import { verifyIdToken, bearerToken } from "./server/auth.js";
+import { createUndoRouter } from "./server/undoRoutes.js";
 
 dotenv.config();
 
@@ -246,6 +247,7 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
         (req as any).adminEmail = email;
         (req as any).adminPermissions = { all: true };
         (req as any).authUid = user.uid;
+        (req as any).authTime = user.authTime;
         next();
         return;
       }
@@ -264,6 +266,7 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
       (req as any).adminEmail = email;
       (req as any).adminPermissions = result.rows[0].permissions;
       (req as any).authUid = user.uid;
+      (req as any).authTime = user.authTime;
       next();
     })
     .catch((err) => {
@@ -410,6 +413,10 @@ app.use('/api/finance', requireAdmin, financeGuard, createFinanceV2Router(pool))
 app.use('/api/people', requireAdmin, peopleGuard, createPeopleRouter(pool));
 // Live split, campus earnings, modelled investors.
 app.use('/api/live', requireAdmin, liveGuard, createLiveRouter(pool));
+// Deleting a record and putting it back. Super-admin only, and it wants a
+// sign-in from the last five minutes -- both checked inside the router
+// against the verified token, not against anything the client asserts.
+app.use('/api/undo', requireAdmin, createUndoRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {

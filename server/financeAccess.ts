@@ -48,6 +48,18 @@ const FINANCE_RULES: Rule[] = [
   { test: /^\/gross-profit(\/|$)/, screens: ['grossprofit'] },
 
   // -- Payroll -------------------------------------------------------------
+  //
+  // THESE TWO COME FIRST, and the order matters -- the first matching rule
+  // wins, so the broad /payroll rule below would otherwise swallow them.
+  //
+  // Recording a salary payment is a Record-screen job as much as a Payroll
+  // one: the Record tab is where somebody logging the day's spending goes,
+  // and sending them anywhere else is what produced the loose untagged salary
+  // expenses in the first place. Both screens can reach the person list and
+  // the payment endpoint; neither can read the register without 'payroll'.
+  { test: /^\/payroll\/people(\/|$)/,     screens: ['payroll', 'record'] },
+  { test: /^\/payroll\/[^/]+\/pay(\/|$)/, screens: ['payroll', 'record'] },
+
   // /reconciliation lives here because the bank comparison is only meaningful
   // to somebody who can already see what left the account in wages.
   { test: /^\/(payroll|deferred|pay-scales|salaries|reconciliation)(\/|$)/,

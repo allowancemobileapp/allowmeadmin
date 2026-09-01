@@ -154,6 +154,65 @@ export function BasisFigure({ label, amount, basis, asOf, movesWhen, negativeOk 
   );
 }
 
+/**
+ * A dropdown that also lets you type something that is not on the list.
+ *
+ * WHY THIS EXISTS RATHER THAN A PLAIN <input>. A typed name is a string. A
+ * chosen one is an id, and an id can be joined to a payroll line, a contract
+ * or a share register. The salary bug came from exactly that difference: a
+ * salary logged as free text could not be matched to the person it paid, so
+ * the payroll register never cleared and the founder appeared to owe staff he
+ * had already paid.
+ *
+ * The escape hatch is deliberate and not a compromise. Paying a contractor
+ * who is not on the cap table is a real thing, and a form that refuses it
+ * teaches people to put the real answer in the wrong box.
+ */
+export function Picker({
+  value, onChange, options, placeholder = 'Choose…',
+  allowOther = true, otherLabel = 'Someone not on this list',
+  otherPlaceholder = 'Type the name', hint,
+}: any) {
+  const isOther = value?.mode === 'other';
+
+  return (
+    <div className="space-y-2">
+      <select
+        className={inputCls}
+        value={isOther ? '__other__' : (value?.id || '')}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === '__other__') onChange({ mode: 'other', text: '' });
+          else if (!v) onChange(null);
+          else {
+            const picked = options.find((o: any) => String(o.id) === v);
+            onChange({ mode: 'picked', id: picked.id, label: picked.label,
+                       meta: picked });
+          }
+        }}>
+        <option value="">{placeholder}</option>
+        {options.map((o: any) => (
+          <option key={o.id} value={o.id}>
+            {o.label}{o.sub ? ` — ${o.sub}` : ''}
+          </option>
+        ))}
+        {allowOther && <option value="__other__">{otherLabel}</option>}
+      </select>
+
+      {isOther && (
+        <input
+          autoFocus
+          className={inputCls}
+          placeholder={otherPlaceholder}
+          value={value.text || ''}
+          onChange={(e) => onChange({ mode: 'other', text: e.target.value })} />
+      )}
+
+      {hint && <p className="text-xs text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
 export function Th({ children, right }: any) {
   return (
     <th className={`px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider ${

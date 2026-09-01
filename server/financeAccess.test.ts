@@ -142,6 +142,24 @@ describe('finance screen guard', () => {
     expect(run(financeGuard, '/me', perms).passed).toBe(true);
   });
 
+  it('lets Record reach the salary endpoints without granting Payroll', () => {
+    // Logging a salary from the Record tab settles the payroll month, so it
+    // needs the person list and the pay endpoint -- and nothing else.
+    const rec = { pages: ['finance'], finance_tabs: ['record'] };
+    expect(run(financeGuard, '/payroll/people', rec).passed).toBe(true);
+    expect(run(financeGuard, '/payroll/abc-123/pay', rec).passed).toBe(true);
+    // But not the register itself, nor what anyone is owed.
+    expect(run(financeGuard, '/payroll', rec).passed).toBe(false);
+    expect(run(financeGuard, '/deferred', rec).passed).toBe(false);
+    expect(run(financeGuard, '/pay-scales/abc', rec).passed).toBe(false);
+  });
+
+  it('still gates the register behind Payroll', () => {
+    const pay = { pages: ['finance'], finance_tabs: ['payroll'] };
+    expect(run(financeGuard, '/payroll', pay).passed).toBe(true);
+    expect(run(financeGuard, '/payroll/people', pay).passed).toBe(true);
+  });
+
   it('does not let Campuses reach the payroll or the cap table', () => {
     const perms = { pages: ['finance'], finance_tabs: ['schools'] };
     expect(run(liveGuard, '/schools', perms).passed).toBe(true);

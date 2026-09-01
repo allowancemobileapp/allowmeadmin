@@ -503,19 +503,99 @@ export function createFinanceRouter(pool: Pool) {
   }));
 
   router.post('/expenses', handleReq(async (req: any, res: any) => {
-    const { title, reason, category, amount, expense_date, vendor } = req.body;
+    const { title, reason, category, amount, expense_date, vendor,
+            person_id } = req.body;
     if (!title || !amount) {
       return res.status(400).json({ error: 'A title and an amount are required.' });
     }
+
+    // THE DOUBLE-ENTRY TRAP THIS CLOSES. A salary logged here used to be a
+    // loose expense with a typed description: the money left the books but
+    // payroll_runs never heard about it, so the staff member stayed showing
+    // as owed in full. If this is a salary for somebody who has an open
+    // payroll month, it belongs on that month -- refused here, with the
+    // months named, rather than silently filed as an unattached expense.
+    if (category === 'payroll' && person_id) {
+      const open = await pool.query(
+        `SELECT payroll_run_id, month, outstanding
+           FROM payroll_outstanding WHERE shareholder_id = $1
+           ORDER BY month`, [person_id]);
+
+      if (open.rows.length > 0) {
+        const months = open.rows.map((o: any) =>
+          new Date(o.month).toLocaleDateString('en-NG',
+            { month: 'long', year: 'numeric' })).join(', ');
+        return res.status(409).json({
+          error: `That person still has unpaid payroll for ${months}. `
+               + 'Record it against the month so the payroll register clears '
+               + 'too -- logging it here would take the money out of the books '
+               + 'and still show them as owed.',
+          code: 'USE_PAYROLL',
+          outstanding: open.rows.map((o: any) => ({
+            payroll_run_id: o.payroll_run_id,
+            month: o.month,
+            outstanding: Number(o.outstanding),
+          })),
+        });
+      }
+    }
+
     const r = await pool.query(
       `INSERT INTO company_expenses
-         (title, reason, category, amount, expense_date, vendor, approved_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+         (title, reason, category, amount, expense_date, vendor, person_id,
+          approved_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [title, reason || category || 'Uncategorised', category || 'other', amount,
-       expense_date || new Date().toISOString(), vendor || null, req.adminEmail]
+       expense_date || new Date().toISOString(), vendor || null,
+       person_id || null, req.adminEmail]
     );
-    await logAdminAction(req, 'finance.expense.add', { title, amount });
+    await logAdminAction(req, 'finance.expense.add', { title, amount, person_id });
     res.status(201).json(r.rows[0]);
+  }));
+
+  /**
+   * Who is still owed what, for the salary form's dropdowns.
+   *
+   * Two lists in one call: everybody who could be paid, and the payroll
+   * months still open. The form needs both to decide whether a payment
+   * settles a month or is a loose expense, and one round trip keeps the
+   * serverless connection count down.
+   */
+  router.get('/payroll/people', handleReq(async (_req: any, res: any) => {
+    const [people, outstanding] = await Promise.all([
+      pool.query(`
+        SELECT s.id, s.full_name, s.role_title, s.staff_role,
+               s.is_founder, s.employment_status,
+               (ps.shareholder_id IS NOT NULL) AS on_payroll
+        FROM shareholders s
+        LEFT JOIN pay_scales ps ON ps.shareholder_id = s.id
+        WHERE s.exited_on IS NULL
+        ORDER BY s.full_name`),
+      pool.query('SELECT * FROM payroll_outstanding'),
+    ]);
+
+    const byPerson: Record<string, any[]> = {};
+    for (const o of outstanding.rows) {
+      (byPerson[o.shareholder_id] ||= []).push({
+        payroll_run_id: o.payroll_run_id,
+        month: o.month,
+        cash_due: Number(o.cash_due),
+        cash_paid: Number(o.cash_paid),
+        outstanding: Number(o.outstanding),
+        overdue: o.overdue,
+      });
+    }
+
+    res.json(people.rows.map((p: any) => ({
+      id: p.id,
+      full_name: p.full_name,
+      role_title: p.role_title || p.staff_role || null,
+      on_payroll: p.on_payroll,
+      is_founder: p.is_founder,
+      outstanding: byPerson[p.id] || [],
+      total_outstanding: (byPerson[p.id] || [])
+        .reduce((a: number, m: any) => a + m.outstanding, 0),
+    })));
   }));
 
   router.get('/investments', handleReq(async (_req: any, res: any) => {

@@ -74,6 +74,16 @@ export type VerifiedUser = {
   email: string;
   emailVerified: boolean;
   signInProvider: string;
+  /**
+   * When this person last actually proved who they are, in epoch seconds.
+   *
+   * Firebase refreshes the token every hour without asking anybody anything,
+   * so `exp` says the session is live and nothing more. auth_time only moves
+   * when a real sign-in or reauthenticateWithPopup happens -- which makes it
+   * the one claim that can gate a dangerous action on "prove it is you, now",
+   * and have the SERVER check it rather than trust a flag from the browser.
+   */
+  authTime: number;
 };
 
 /**
@@ -174,6 +184,11 @@ export async function verifyIdToken(token: string): Promise<VerifiedUser> {
     email: String(payload.email).toLowerCase(),
     emailVerified: payload.email_verified === true,
     signInProvider: provider,
+    // Falls back to iat rather than to 0: a token with no auth_time is not
+    // evidence of a sign-in an infinite time ago, it is just a token that did
+    // not carry the claim.
+    authTime: typeof payload.auth_time === 'number' ? payload.auth_time
+                                                    : payload.iat,
   };
 }
 

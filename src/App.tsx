@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { auth, loginWithGoogle, logoutFirebase } from './firebase';
+import { auth, loginWithGoogle, logoutFirebase, completeRedirectLogin } from './firebase';
 
 export function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
@@ -277,6 +277,18 @@ function AppRouter() {
   };
 
   useEffect(() => {
+    // If this load is the return leg of a redirect sign-in, finish it and
+    // surface anything Google objected to. onAuthStateChanged below still
+    // does the actual work; this is what stops an error being swallowed.
+    completeRedirectLogin().catch((e: any) => {
+      if (e?.code === 'auth/unauthorized-domain') {
+        alert('This address is not on the Firebase authorised-domains list. '
+            + 'Add it under Firebase Console → Authentication → Settings.');
+      } else if (e?.code) {
+        alert(`Sign-in did not complete: ${e.code}`);
+      }
+    });
+
     const unsub = auth.onAuthStateChanged(async (user) => {
       try {
         if (user?.email) {
@@ -296,9 +308,11 @@ function AppRouter() {
 
   const login = async () => {
     try {
+      // null means a redirect is under way and the page is about to navigate.
+      // Not a failure -- onAuthStateChanged picks it up when we come back.
       await loginWithGoogle();
     } catch (e: any) {
-      alert("Login failed: " + e.message);
+      alert("Login failed: " + (e?.code || e?.message || e));
     }
   };
 
