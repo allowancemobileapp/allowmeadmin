@@ -3570,6 +3570,151 @@ function createPeopleRouter(pool2) {
     );
     return own.rows.length > 0;
   };
+  router.get("/:id/profile", handle(async (req, res) => {
+    const privileged = await canSeeContracts(req, req.params.id);
+    const [person, profile, bank] = await Promise.all([
+      pool2.query(
+        `SELECT id, full_name, email, phone, role_title, staff_role,
+                employment_status, joined_on, exited_on, notes
+           FROM shareholders WHERE id = $1`,
+        [req.params.id]
+      ),
+      pool2.query(
+        "SELECT * FROM staff_profiles WHERE person_id = $1",
+        [req.params.id]
+      ),
+      privileged ? pool2.query(
+        "SELECT * FROM staff_bank_details WHERE person_id = $1",
+        [req.params.id]
+      ) : pool2.query(
+        "SELECT * FROM staff_bank_masked WHERE person_id = $1",
+        [req.params.id]
+      )
+    ]);
+    if (!person.rows[0]) throw new Error("No such person.");
+    if (privileged && bank.rows[0]?.account_number && await roleOf(req.adminEmail) === "founder") {
+      const self = await pool2.query(
+        `SELECT 1 FROM finance_users WHERE shareholder_id = $1
+           AND lower(email) = lower($2)`,
+        [req.params.id, req.adminEmail || ""]
+      );
+      if (self.rows.length === 0) {
+        await audit(
+          req,
+          "bank.details.view",
+          "staff_bank_details",
+          req.params.id,
+          null,
+          null
+        );
+      }
+    }
+    res.json({
+      person: person.rows[0],
+      profile: profile.rows[0] || null,
+      bank: bank.rows[0] || null,
+      // The client renders differently rather than guessing from whether a
+      // field happens to be present.
+      bank_visible: privileged
+    });
+  }));
+  router.put("/:id/profile", founderOnly(async (req, res) => {
+    const FIELDS = [
+      "address_line1",
+      "address_line2",
+      "city",
+      "state",
+      "country",
+      "date_of_birth",
+      "gender",
+      "personal_email",
+      "alternate_phone",
+      "emergency_name",
+      "emergency_relationship",
+      "emergency_phone",
+      "next_of_kin_name",
+      "next_of_kin_relationship",
+      "next_of_kin_phone",
+      "employment_type",
+      "work_location",
+      "reports_to",
+      "probation_ends",
+      "notes"
+    ];
+    const given = FIELDS.filter((f) => f in req.body);
+    if (given.length === 0) {
+      return res.status(400).json({ error: "Nothing to change." });
+    }
+    const clean = (f) => {
+      const v = req.body[f];
+      return v === "" || v === void 0 ? null : v;
+    };
+    const before = await pool2.query(
+      "SELECT * FROM staff_profiles WHERE person_id = $1",
+      [req.params.id]
+    );
+    const cols = ["person_id", ...given, "updated_by"];
+    const values = [req.params.id, ...given.map(clean), req.adminEmail];
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+    const updates = [...given, "updated_by"].map((f) => `${f} = EXCLUDED.${f}`).join(", ");
+    const r = await pool2.query(
+      `INSERT INTO staff_profiles (${cols.join(", ")})
+       VALUES (${placeholders})
+       ON CONFLICT (person_id) DO UPDATE SET ${updates}
+       RETURNING *`,
+      values
+    );
+    await audit(
+      req,
+      "profile.update",
+      "staff_profiles",
+      req.params.id,
+      before.rows[0] || null,
+      r.rows[0]
+    );
+    res.json(r.rows[0]);
+  }));
+  router.put("/:id/bank", founderOnly(async (req, res) => {
+    const {
+      bank_name,
+      account_number,
+      account_name,
+      bank_code,
+      verified
+    } = req.body;
+    const digits = String(account_number || "").replace(/\s/g, "");
+    if (digits && !/^\d{6,20}$/.test(digits)) {
+      return res.status(400).json({
+        error: "An account number should be between 6 and 20 digits, and digits only."
+      });
+    }
+    const r = await pool2.query(
+      `INSERT INTO staff_bank_details
+         (person_id, bank_name, account_number, account_name, bank_code,
+          verified_at, verified_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (person_id) DO UPDATE SET
+         bank_name = EXCLUDED.bank_name,
+         account_number = EXCLUDED.account_number,
+         account_name = EXCLUDED.account_name,
+         bank_code = EXCLUDED.bank_code,
+         verified_at = EXCLUDED.verified_at,
+         verified_by = EXCLUDED.verified_by,
+         updated_by = EXCLUDED.updated_by
+       RETURNING *`,
+      [
+        req.params.id,
+        bank_name || null,
+        digits || null,
+        account_name || null,
+        bank_code || null,
+        verified ? /* @__PURE__ */ new Date() : null,
+        verified ? req.adminEmail : null,
+        req.adminEmail
+      ]
+    );
+    res.json(r.rows[0]);
+  }));
   router.get("/:id/contracts", handle(async (req, res) => {
     if (!await canSeeContracts(req, req.params.id)) {
       return res.status(403).json({ error: "You can only see your own contract." });

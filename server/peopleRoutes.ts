@@ -375,6 +375,159 @@ export function createPeopleRouter(pool: Pool) {
     return own.rows.length > 0;
   };
 
+  // ---- The person's own record -------------------------------------------
+
+  /**
+   * Everything about one person except their pay.
+   *
+   * TWO SENSITIVITIES, TWO RULES, ONE RESPONSE. The profile is HR detail and
+   * goes to anyone holding the People screen. The bank details are a salary
+   * destination and go to the founder or the person themselves; everybody
+   * else gets the last four digits, which is enough to recognise an account
+   * and not enough to pay into one.
+   *
+   * Doing this in one endpoint rather than two keeps the masking decision in
+   * a single place. Two endpoints is how one of them ends up forgetting.
+   */
+  router.get('/:id/profile', handle(async (req: any, res: any) => {
+    const privileged = await canSeeContracts(req, req.params.id);
+
+    const [person, profile, bank] = await Promise.all([
+      pool.query(
+        `SELECT id, full_name, email, phone, role_title, staff_role,
+                employment_status, joined_on, exited_on, notes
+           FROM shareholders WHERE id = $1`, [req.params.id]),
+      pool.query('SELECT * FROM staff_profiles WHERE person_id = $1',
+                 [req.params.id]),
+      privileged
+        ? pool.query('SELECT * FROM staff_bank_details WHERE person_id = $1',
+                     [req.params.id])
+        : pool.query('SELECT * FROM staff_bank_masked WHERE person_id = $1',
+                     [req.params.id]),
+    ]);
+
+    if (!person.rows[0]) throw new Error('No such person.');
+
+    // Reading somebody's full account number is worth a line in the audit
+    // trail. Reading your own is not -- that is just looking at your own
+    // payslip details, and logging it would bury the reads that matter.
+    if (privileged && bank.rows[0]?.account_number
+        && await roleOf(req.adminEmail) === 'founder') {
+      const self = await pool.query(
+        `SELECT 1 FROM finance_users WHERE shareholder_id = $1
+           AND lower(email) = lower($2)`, [req.params.id, req.adminEmail || '']);
+      if (self.rows.length === 0) {
+        await audit(req, 'bank.details.view', 'staff_bank_details',
+                    req.params.id, null, null);
+      }
+    }
+
+    res.json({
+      person: person.rows[0],
+      profile: profile.rows[0] || null,
+      bank: bank.rows[0] || null,
+      // The client renders differently rather than guessing from whether a
+      // field happens to be present.
+      bank_visible: privileged,
+    });
+  }));
+
+  /** Set or change the profile. Founder only. */
+  router.put('/:id/profile', founderOnly(async (req: any, res: any) => {
+    // A whitelist, not Object.keys(req.body). Building an UPDATE from
+    // whatever the caller sent is how a request quietly writes a column it
+    // was never meant to reach.
+    const FIELDS = [
+      'address_line1', 'address_line2', 'city', 'state', 'country',
+      'date_of_birth', 'gender', 'personal_email', 'alternate_phone',
+      'emergency_name', 'emergency_relationship', 'emergency_phone',
+      'next_of_kin_name', 'next_of_kin_relationship', 'next_of_kin_phone',
+      'employment_type', 'work_location', 'reports_to', 'probation_ends',
+      'notes',
+    ];
+
+    const given = FIELDS.filter((f) => f in req.body);
+    if (given.length === 0) {
+      return res.status(400).json({ error: 'Nothing to change.' });
+    }
+
+    // Empty strings become NULL. A date column will not take '' and an empty
+    // box means "not recorded", not "recorded as blank".
+    const clean = (f: string) => {
+      const v = req.body[f];
+      return v === '' || v === undefined ? null : v;
+    };
+
+    const before = await pool.query(
+      'SELECT * FROM staff_profiles WHERE person_id = $1', [req.params.id]);
+
+    const cols = ['person_id', ...given, 'updated_by'];
+    const values = [req.params.id, ...given.map(clean), req.adminEmail];
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+    const updates = [...given, 'updated_by']
+      .map((f) => `${f} = EXCLUDED.${f}`).join(', ');
+
+    const r = await pool.query(
+      `INSERT INTO staff_profiles (${cols.join(', ')})
+       VALUES (${placeholders})
+       ON CONFLICT (person_id) DO UPDATE SET ${updates}
+       RETURNING *`, values);
+
+    await audit(req, 'profile.update', 'staff_profiles', req.params.id,
+                before.rows[0] || null, r.rows[0]);
+    res.json(r.rows[0]);
+  }));
+
+  /**
+   * Set or change where somebody's salary is paid.
+   *
+   * FOUNDER ONLY, INCLUDING FOR THEIR OWN. An account number plus a name is
+   * enough to redirect a payment, and salary destinations are a standard
+   * fraud target: take over an account, change the details, wait for payday.
+   * If the person could edit their own, one compromised login would be
+   * enough. They can read theirs to check it; changing it is a conversation.
+   *
+   * The audit entry is written by a trigger on the table rather than here, so
+   * a change made by any route at all is still recorded.
+   */
+  router.put('/:id/bank', founderOnly(async (req: any, res: any) => {
+    const { bank_name, account_number, account_name, bank_code,
+            verified } = req.body;
+
+    // Digits only. Nigerian NUBAN accounts are ten; other formats exist, so
+    // this refuses obvious nonsense rather than enforcing a single country's
+    // rule and locking out a legitimate account.
+    const digits = String(account_number || '').replace(/\s/g, '');
+    if (digits && !/^\d{6,20}$/.test(digits)) {
+      return res.status(400).json({
+        error: 'An account number should be between 6 and 20 digits, and '
+             + 'digits only.',
+      });
+    }
+
+    const r = await pool.query(
+      `INSERT INTO staff_bank_details
+         (person_id, bank_name, account_number, account_name, bank_code,
+          verified_at, verified_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (person_id) DO UPDATE SET
+         bank_name = EXCLUDED.bank_name,
+         account_number = EXCLUDED.account_number,
+         account_name = EXCLUDED.account_name,
+         bank_code = EXCLUDED.bank_code,
+         verified_at = EXCLUDED.verified_at,
+         verified_by = EXCLUDED.verified_by,
+         updated_by = EXCLUDED.updated_by
+       RETURNING *`,
+      [req.params.id, bank_name || null, digits || null,
+       account_name || null, bank_code || null,
+       verified ? new Date() : null,
+       verified ? req.adminEmail : null,
+       req.adminEmail]);
+
+    res.json(r.rows[0]);
+  }));
+
   router.get('/:id/contracts', handle(async (req: any, res: any) => {
     if (!await canSeeContracts(req, req.params.id)) {
       return res.status(403).json({ error: 'You can only see your own contract.' });

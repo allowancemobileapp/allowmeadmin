@@ -4,9 +4,11 @@ import {
   fmtKobo, shares, inputCls, btnCls, btnGhost,
 } from './ui';
 import { authHeadersForUpload } from '../../hooks/useApi';
+import { ProfilePane } from './ProfilePane';
 import {
   UserPlus, KeyRound, FileText, Gift, Upload, ExternalLink,
   ShieldCheck, Wallet, Users, Ban, Loader2,
+  UserCircle,
 } from 'lucide-react';
 
 /**
@@ -232,13 +234,15 @@ function PersonDetail({ person: p, isFounder, get, post, put, del, onChange }: a
 
   const panes = isFounder
     ? [
+        { id: 'profile', label: 'Profile', icon: UserCircle },
         { id: 'tags', label: 'Role & tags', icon: ShieldCheck },
         { id: 'access', label: 'Access', icon: KeyRound },
         { id: 'salary', label: 'Salary', icon: Wallet },
         { id: 'contracts', label: 'Contracts', icon: FileText },
         { id: 'rewards', label: 'Rewards', icon: Gift },
       ]
-    : [{ id: 'contracts', label: 'My contract', icon: FileText }];
+    : [{ id: 'profile', label: 'My details', icon: UserCircle },
+       { id: 'contracts', label: 'My documents', icon: FileText }];
 
   return (
     <div className="space-y-4">
@@ -253,6 +257,8 @@ function PersonDetail({ person: p, isFounder, get, post, put, del, onChange }: a
         ))}
       </div>
 
+      {pane === 'profile'   && <ProfilePane p={p} get={get} put={put}
+                                            isFounder={isFounder} onChange={onChange} />}
       {pane === 'tags'      && <TagsPane p={p} put={put} onChange={onChange} />}
       {pane === 'access'    && <AccessPane p={p} post={post} del={del} onChange={onChange} />}
       {pane === 'salary'    && <SalaryPane p={p} put={put} onChange={onChange} />}
@@ -557,6 +563,20 @@ function SalaryPane({ p, put, onChange }: any) {
   );
 }
 
+const DOC_KINDS: Record<string, string> = {
+  employment: 'Employment contract',
+  offer: 'Offer letter',
+  nda: 'NDA',
+  amendment: 'Amendment',
+  certification: 'Certification',
+  qualification: 'Degree / diploma',
+  reference: 'Reference letter',
+  id_document: 'ID document',
+  tax: 'Tax document',
+  medical: 'Medical',
+  other: 'Other',
+};
+
 function ContractsPane({ p, get, isFounder, onChange }: any) {
   const [list, setList] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
@@ -631,7 +651,7 @@ function ContractsPane({ p, get, isFounder, onChange }: any) {
                   {c.title}
                 </p>
                 <p className="text-xs text-slate-500">
-                  {c.kind.replace('_', ' ')} ·{' '}
+                  {DOC_KINDS[c.kind] || c.kind.replace('_', ' ')} ·{' '}
                   {new Date(c.uploaded_at).toLocaleDateString('en-NG')}
                   {c.superseded_by && ' · replaced'}
                 </p>
@@ -654,10 +674,22 @@ function ContractsPane({ p, get, isFounder, onChange }: any) {
             <Field label="Type">
               <select className={inputCls} value={kind}
                       onChange={(e) => setKind(e.target.value)}>
-                <option value="employment">Employment contract</option>
-                <option value="offer">Offer letter</option>
-                <option value="nda">NDA</option>
-                <option value="amendment">Amendment</option>
+                <optgroup label="Contracts">
+                  <option value="employment">Employment contract</option>
+                  <option value="offer">Offer letter</option>
+                  <option value="nda">NDA</option>
+                  <option value="amendment">Amendment</option>
+                </optgroup>
+                <optgroup label="Certificates and credentials">
+                  <option value="certification">Certification</option>
+                  <option value="qualification">Degree / diploma</option>
+                  <option value="reference">Reference letter</option>
+                </optgroup>
+                <optgroup label="Identity and compliance">
+                  <option value="id_document">ID document</option>
+                  <option value="tax">Tax document (TIN, PAYE)</option>
+                  <option value="medical">Medical / fitness to work</option>
+                </optgroup>
                 <option value="other">Other</option>
               </select>
             </Field>
