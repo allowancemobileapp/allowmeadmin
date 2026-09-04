@@ -4672,6 +4672,124 @@ function createUndoRouter(pool2) {
   return router;
 }
 
+// server/rolesRoutes.ts
+import { Router as Router8 } from "express";
+function createRolesRouter(pool2) {
+  const router = Router8();
+  const handle = (fn) => async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (e) {
+      console.error("[roles]", e);
+      if (e.code === "42883" || e.code === "42P01") {
+        return res.status(400).json({
+          error: "The role review tables are not there yet. Run the app's 0087_role_applications.sql, then migrations/0093_role_application_review.sql."
+        });
+      }
+      res.status(400).json({ error: e.message });
+    }
+  };
+  const logAdminAction2 = async (req, action, details) => {
+    try {
+      await pool2.query(
+        `INSERT INTO system_logs (type, admin_email, action, details)
+         VALUES ($1, $2, $3, $4)`,
+        ["admin", req.adminEmail || "unknown", action, JSON.stringify(details)]
+      );
+    } catch (e) {
+      console.error("log failed", e);
+    }
+  };
+  router.get("/applications", handle(async (req, res) => {
+    const status = String(req.query.status || "pending");
+    const kind = req.query.kind ? String(req.query.kind) : null;
+    const r = await pool2.query(`
+      SELECT * FROM role_application_queue
+      WHERE ($1 = 'all' OR status = $1)
+        AND ($2::text IS NULL OR kind = $2)
+      ORDER BY
+        -- Pending at the top whatever else is being shown.
+        CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+        CASE WHEN status = 'pending' THEN created_at END ASC,
+        reviewed_at DESC NULLS LAST
+      LIMIT 200`, [status, kind]);
+    const counts = await pool2.query(`
+      SELECT kind, status, COUNT(*)::int AS n
+      FROM role_applications GROUP BY kind, status`);
+    res.json({
+      applications: r.rows.map((a) => ({
+        ...a,
+        previous_rejections: Number(a.previous_rejections || 0)
+      })),
+      counts: counts.rows
+    });
+  }));
+  router.get("/applications/:userId/history", handle(async (req, res) => {
+    const r = await pool2.query(`
+      SELECT id, kind, status, note, review_note, reviewer_email,
+             reviewed_at, created_at
+      FROM role_applications
+      WHERE user_id = $1
+      ORDER BY created_at DESC`, [req.params.userId]);
+    res.json(r.rows);
+  }));
+  router.post("/applications/:id/review", handle(async (req, res) => {
+    const { decision, note } = req.body;
+    if (decision !== "approved" && decision !== "rejected") {
+      return res.status(400).json({
+        error: "A decision is either approved or rejected."
+      });
+    }
+    if (decision === "rejected" && !String(note || "").trim()) {
+      return res.status(400).json({
+        error: "Say why it is being turned down \u2014 the applicant is told this."
+      });
+    }
+    const r = await pool2.query(
+      "SELECT * FROM review_role_application($1, $2, $3, $4)",
+      [req.params.id, decision, req.adminEmail, note || null]
+    );
+    await logAdminAction2(req, `role.application.${decision}`, {
+      application_id: req.params.id,
+      kind: r.rows[0]?.kind,
+      user_id: r.rows[0]?.user_id,
+      note: note || null
+    });
+    res.json(r.rows[0]);
+  }));
+  router.post("/revoke", handle(async (req, res) => {
+    const { user_id, kind, reason } = req.body;
+    if (!user_id || !kind) {
+      return res.status(400).json({ error: "Which person, and which role?" });
+    }
+    if (!String(reason || "").trim()) {
+      return res.status(400).json({
+        error: "Say why this role is being taken away. It goes on the record."
+      });
+    }
+    await pool2.query(
+      "SELECT revoke_role($1, $2, $3, $4)",
+      [user_id, kind, req.adminEmail, reason]
+    );
+    await logAdminAction2(req, "role.revoked", { user_id, kind, reason });
+    res.json({ revoked: true, user_id, kind });
+  }));
+  router.get("/holders", handle(async (req, res) => {
+    const kind = String(req.query.kind || "delivery_agent");
+    const column = kind === "transport_vendor" ? "is_transport_vendor" : "is_delivery_agent";
+    const r = await pool2.query(`
+      SELECT id AS user_id, full_name, username, avatar_url, phone_number,
+             school_name, created_at AS joined_at,
+             COALESCE(is_available_for_delivery, false) AS available
+      FROM profiles
+      WHERE ${column} = true
+      ORDER BY full_name NULLS LAST
+      LIMIT 500`);
+    res.json(r.rows);
+  }));
+  return router;
+}
+
 // server.ts
 import cors from "cors";
 dotenv.config();
@@ -4963,6 +5081,7 @@ app.use("/api/finance", requireAdmin, financeGuard, createFinanceV2Router(pool))
 app.use("/api/people", requireAdmin, peopleGuard, createPeopleRouter(pool));
 app.use("/api/live", requireAdmin, liveGuard, createLiveRouter(pool));
 app.use("/api/undo", requireAdmin, createUndoRouter(pool));
+app.use("/api/roles", requireAdmin, createRolesRouter(pool));
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM company_expenses ORDER BY expense_date DESC");

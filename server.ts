@@ -15,6 +15,7 @@ import { createLiveRouter } from "./server/liveRoutes.js";
 import { financeGuard, liveGuard, peopleGuard } from "./server/financeAccess.js";
 import { verifyIdToken, bearerToken } from "./server/auth.js";
 import { createUndoRouter } from "./server/undoRoutes.js";
+import { createRolesRouter } from "./server/rolesRoutes.js";
 
 dotenv.config();
 
@@ -417,6 +418,10 @@ app.use('/api/live', requireAdmin, liveGuard, createLiveRouter(pool));
 // sign-in from the last five minutes -- both checked inside the router
 // against the verified token, not against anything the client asserts.
 app.use('/api/undo', requireAdmin, createUndoRouter(pool));
+// Delivery-agent and transport-vendor applications. The flag itself is
+// locked by a trigger in the app's 0087; these routes go through the
+// review functions, which are the only door through it.
+app.use('/api/roles', requireAdmin, createRolesRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {
