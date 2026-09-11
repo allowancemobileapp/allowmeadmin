@@ -39,6 +39,9 @@ const SHELL = /^\/(role|bootstrap|settings|expense-categories)(\/|$)/;
 const FINANCE_RULES: Rule[] = [
   // -- Money in & out ------------------------------------------------------
   { test: /^\/(summary|timeseries)(\/|$)/, screens: ['overview'] },
+  // Subscriptions whose payments do not reconcile. Shown on Money in & out,
+  // because that is where somebody looks to ask "is this figure right".
+  { test: /^\/discrepancies(\/|$)/, screens: ['overview', 'reports'] },
   { test: /^\/revenue(\/|$)/,              screens: ['overview', 'reports'] },
   { test: /^\/income(\/|$)/,               screens: ['overview', 'record'] },
   { test: /^\/expenses(\/|$)/,

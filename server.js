@@ -1154,6 +1154,37 @@ function createFinanceRouter(pool2) {
     await logAdminAction2(req, "finance.expense.add", { title, amount, person_id });
     res.status(201).json(r.rows[0]);
   }));
+  router.get("/discrepancies", handleReq(async (_req, res) => {
+    try {
+      const r = await pool2.query(`
+        SELECT user_id, username, full_name, subscription_tier, joined_at,
+               paid_payments, zero_payments, collected_kobo, last_payment_at,
+               state
+        FROM subscription_discrepancies
+        WHERE state <> 'consistent'
+        ORDER BY joined_at DESC`);
+      const price = await pool2.query("SELECT plus_price_kobo() AS kobo");
+      const unit = Number(price.rows[0]?.kobo || 0);
+      res.json({
+        rows: r.rows.map((d) => ({
+          ...d,
+          paid_payments: Number(d.paid_payments),
+          zero_payments: Number(d.zero_payments),
+          collected_kobo: Number(d.collected_kobo)
+        })),
+        // What one month of Plus is worth, so the page can say what the gap
+        // is likely to be rather than leaving somebody to multiply.
+        plus_price_kobo: unit
+      });
+    } catch (e) {
+      if (e.code === "42P01") {
+        return res.status(400).json({
+          error: "The reconciliation view does not exist yet. Run migrations/0095_membership_logging.sql."
+        });
+      }
+      throw e;
+    }
+  }));
   router.get("/payroll/people", handleReq(async (_req, res) => {
     const [people, outstanding] = await Promise.all([
       pool2.query(`
@@ -4213,6 +4244,9 @@ var SHELL = /^\/(role|bootstrap|settings|expense-categories)(\/|$)/;
 var FINANCE_RULES = [
   // -- Money in & out ------------------------------------------------------
   { test: /^\/(summary|timeseries)(\/|$)/, screens: ["overview"] },
+  // Subscriptions whose payments do not reconcile. Shown on Money in & out,
+  // because that is where somebody looks to ask "is this figure right".
+  { test: /^\/discrepancies(\/|$)/, screens: ["overview", "reports"] },
   { test: /^\/revenue(\/|$)/, screens: ["overview", "reports"] },
   { test: /^\/income(\/|$)/, screens: ["overview", "record"] },
   {

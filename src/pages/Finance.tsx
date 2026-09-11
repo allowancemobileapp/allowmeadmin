@@ -26,6 +26,7 @@ import { LiveSplitTab } from './finance/LiveSplit';
 import { SchoolsTab } from './finance/SchoolsTab';
 import { SharePrice } from './finance/SharePrice';
 import { DeleteRecords } from './finance/DeleteRecords';
+import { Discrepancies } from './finance/Discrepancies';
 import { InvestorPicker } from './finance/Investors';
 
 /**
@@ -262,7 +263,8 @@ export default function Finance() {
         ? <Empty>Loading…</Empty>
         : (
           <>
-            {tab === 'overview'    && <Overview summary={summary} series={series} />}
+            {tab === 'overview'    && <Overview summary={summary} series={series}
+                                   get={get} />}
             {tab === 'live'        && <LiveSplitTab get={get} period={period} role={role} />}
             {tab === 'schools'     && <SchoolsTab get={get} post={post} put={put}
                                                   del={del} period={period} role={role} />}
@@ -293,13 +295,15 @@ export default function Finance() {
 // Money in & out
 // --------------------------------------------------------------------------
 
-function Overview({ summary, series }: any) {
+function Overview({ summary, series, get }: any) {
   if (!summary) return <Empty>No data.</Empty>;
   const t = summary.totals;
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <Discrepancies get={get} />
+
+<div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <Stat label="Money in" value={fmtNaira(t.income)} icon={TrendingUp} tone="green"
               sub={t.income_change_pct !== null
                 ? `${t.income_change_pct >= 0 ? '+' : ''}${t.income_change_pct.toFixed(1)}% vs previous`
@@ -987,6 +991,7 @@ function RecordTab({ post, get, onDone }: any) {
                     <option value="premium_groups">Premium groups</option>
                     <option value="store_subscriptions">Store subscriptions</option>
                     <option value="delivery_commission">Delivery commission</option>
+                    <option value="transport_bookings">Transport bookings</option>
                   </optgroup>
                 </select>
               </Field>
