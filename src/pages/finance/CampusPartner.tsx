@@ -228,10 +228,17 @@ export function BreakdownModal({ school, period, get, onClose }: any) {
       )}
 
       <Note tone="slate">
-        &ldquo;Company keeps&rdquo; is less than &ldquo;paid&rdquo; where a
-        third party takes a share &mdash; a ticket carries a flat ₦500 fee and
-        the rest belongs to the organiser. A campus cut is calculated on what
-        the company keeps, not on the face value.
+        &ldquo;Company keeps&rdquo; is less than &ldquo;paid&rdquo; for two
+        reasons. A third party may take a share &mdash; a ticket carries a flat
+        ₦500 fee and the rest belongs to the organiser. And the payment
+        processor takes its cut before the money arrives, so a ₦700
+        subscription reaches the company as ₦689.50.
+        <br /><br />
+        A campus cut is calculated on what the company actually keeps, not on
+        the face value, because that is what the agreement offers a share of.
+        Delivery and transport show no deduction here: those fees are settled
+        separately by the agent, so the processor&rsquo;s cut lands on that
+        settlement rather than on the ride.
       </Note>
     </Modal>
   );
