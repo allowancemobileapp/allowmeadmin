@@ -25,6 +25,8 @@ import {
   LineChart,
   Landmark,
   Bike,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -64,7 +66,10 @@ import Approvals from './pages/Approvals';
 import UsersPage from './pages/UsersPage';
 import Finance from './pages/Finance';
 
-function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: boolean) => void }) {
+function Sidebar({ isOpen, setIsOpen, collapsed, setCollapsed }: {
+  isOpen: boolean; setIsOpen: (v: boolean) => void;
+  collapsed: boolean; setCollapsed: (v: boolean) => void;
+}) {
   const location = useLocation();
   const { logout, email, permissions } = React.useContext(AuthContext);
   
@@ -107,13 +112,19 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
         onClick={() => setIsOpen(false)} 
       />
       <aside className={cn(
-        "fixed md:relative top-0 bottom-0 left-0 w-64 bg-slate-900 flex flex-col border-r border-slate-800 z-30 transition-transform duration-300 md:translate-x-0",
+        "fixed md:relative top-0 bottom-0 left-0 bg-slate-900 flex flex-col border-r border-slate-800 z-30 transition-all duration-300 md:translate-x-0",
+        // Mobile slides the whole panel; desktop narrows it to an icon rail.
+        collapsed ? "w-64 md:w-[4.5rem]" : "w-64",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        <div className="p-6 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <div className={cn(
+          "border-b border-slate-800 flex items-center shrink-0",
+          collapsed ? "p-4 md:justify-center" : "p-6 justify-between"
+        )}>
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 bg-indigo-500 dark:bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-white">A</div>
-            <span className="font-bold text-slate-100 tracking-tight text-xl">PRO</span>
+            <div className="h-8 w-8 bg-indigo-500 dark:bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-white shrink-0">A</div>
+            <span className={cn("font-bold text-slate-100 tracking-tight text-xl",
+                                collapsed && "md:hidden")}>PRO</span>
           </div>
           <button className="md:hidden text-slate-400" onClick={() => setIsOpen(false)}>
              <X className="w-5 h-5" />
@@ -127,20 +138,35 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
                 key={item.to}
                 to={item.to}
                 onClick={() => setIsOpen(false)}
+                title={collapsed ? item.label : undefined}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2 rounded-md font-medium transition-colors text-sm",
+                  collapsed && "md:justify-center md:px-2",
                   isActive 
                     ? "bg-indigo-600/10 text-indigo-400" 
                     : "text-slate-400 hover:bg-slate-800"
                 )}
               >
-                <item.icon className="w-4 h-4" />
-                {item.label}
+                <item.icon className="w-4 h-4 shrink-0" />
+                {/* Hidden rather than removed, so the icon keeps its place
+                    and the rail does not reflow when it expands again. */}
+                <span className={cn(collapsed && "md:hidden")}>{item.label}</span>
               </Link>
             );
           })}
         </nav>
-        <div className="p-4 border-t border-slate-800 bg-slate-950/50 shrink-0">
+        {/* Desktop only: on mobile the panel already slides away entirely. */}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          title={collapsed ? 'Expand the menu' : 'Collapse the menu'}
+          className="hidden md:flex items-center gap-3 px-5 py-2.5 text-slate-500 hover:text-slate-300 hover:bg-slate-800 text-xs font-bold border-t border-slate-800 shrink-0">
+          {collapsed
+            ? <ChevronRight className="w-4 h-4 mx-auto" />
+            : <><ChevronLeft className="w-4 h-4" /> COLLAPSE</>}
+        </button>
+
+        <div className={cn("border-t border-slate-800 bg-slate-950/50 shrink-0",
+                           collapsed ? "p-3" : "p-4")}>
           <div className="flex items-center justify-between mb-2">
               <p className="text-[10px] uppercase font-bold text-slate-500">Authenticated Admin</p>
                <button onClick={logout} className="text-[10px] text-red-400 hover:underline">Log Out</button>
@@ -157,11 +183,20 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: bool
 
 function Layout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  // Remembered, because re-collapsing it on every page load would make the
+  // setting useless to anybody who actually wants the space.
+  const [collapsed, setCollapsedState] = React.useState(
+    () => localStorage.getItem('sidebar_collapsed') === '1');
+  const setCollapsed = (v: boolean) => {
+    setCollapsedState(v);
+    try { localStorage.setItem('sidebar_collapsed', v ? '1' : '0'); } catch {}
+  };
   const { title } = React.useContext(AuthContext);
 
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-950 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 dark:text-slate-100 overflow-hidden text-sm">
-      <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen}
+               collapsed={collapsed} setCollapsed={setCollapsed} />
       <main className="flex-1 flex flex-col overflow-hidden">
         <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 dark:border-slate-800 px-4 md:px-8 flex items-center justify-between shadow-sm z-10 shrink-0">
           <div className="flex items-center gap-4 md:gap-8">

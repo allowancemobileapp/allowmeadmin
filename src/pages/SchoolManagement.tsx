@@ -158,7 +158,7 @@ export default function SchoolManagement() {
             </button>
           </div>
           <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
-            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap">
+            <div className="overflow-x-auto"><table className="w-full min-w-[40rem] text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
                 <tr>
                   <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Username</th>

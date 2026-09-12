@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { PinPrompt, PinSettings, isSuperAdmin } from '../components/AdminPin';
+import { auth } from '../firebase';
 import { useApi } from '../hooks/useApi';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -12,6 +14,8 @@ export default function Transactions() {
   const [generateMsg, setGenerateMsg] = useState('');
   const [activeTab, setActiveTab] = useState<string>('expenses');
   const [showExportModal, setShowExportModal] = useState(false);
+  // The expense being retracted, waiting on a PIN.
+  const [retracting, setRetracting] = useState<any>(null);
   const [exportTimeframe, setExportTimeframe] = useState('Current Month');
   const { get, post } = useApi();
 
@@ -280,13 +284,14 @@ export default function Transactions() {
           
           {/* Expenses List */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden xl:col-span-2">
-            <table className="w-full text-left text-sm whitespace-nowrap">
+            <table className="w-full min-w-[40rem] text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
                 <tr>
                   <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Title</th>
                   <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Reason</th>
                   <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Amount</th>
                   <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Date</th>
+                  {isSuperAdmin() && <th className="px-6 py-3"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -298,6 +303,17 @@ export default function Transactions() {
                     </td>
                     <td className="px-6 py-4 font-mono font-bold text-base text-rose-600">-₦{parseFloat(exp.amount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                     <td className="px-6 py-4 text-slate-500 text-xs font-mono">{new Date(exp.expense_date).toLocaleString()}</td>
+                    {/* Retract lives HERE, next to the row, rather than on a
+                        separate screen. An expense entered by mistake is
+                        noticed while looking at it. */}
+                    {isSuperAdmin() && (
+                      <td className="px-6 py-4 text-right">
+                        <button onClick={() => setRetracting(exp)}
+                          className="text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-2.5 py-1.5 rounded-lg whitespace-nowrap">
+                          Retract
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -307,7 +323,7 @@ export default function Transactions() {
         </div>
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
-          <table className="w-full text-left text-sm whitespace-nowrap">
+          <table className="w-full min-w-[40rem] text-left text-sm whitespace-nowrap">
             <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
               <tr>
                 <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Type</th>
@@ -356,6 +372,28 @@ export default function Transactions() {
           </table>
           {filteredTransactions.length === 0 && <div className="p-6 text-center text-slate-400 font-medium text-sm">No transactions found for this type.</div>}
         </div>
+      )}
+
+      {retracting && (
+        <PinPrompt
+          title="Retract this expense"
+          action={`${retracting.title} — ₦${parseFloat(retracting.amount).toLocaleString()}. It is kept and can be put back.`}
+          onClose={() => setRetracting(null)}
+          onConfirm={async (pin) => {
+            const res = await fetch(`/api/undo/expense/${retracting.id}`, {
+              method: 'DELETE',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${await auth.currentUser!.getIdToken()}`,
+                'x-admin-pin': pin,
+              },
+              body: JSON.stringify({ reason: 'Retracted from Transactions' }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error || 'Could not retract it.');
+            setRetracting(null);
+            fetchData();
+          }} />
       )}
 
       {showExportModal && (

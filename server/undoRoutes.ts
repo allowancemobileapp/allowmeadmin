@@ -10,12 +10,17 @@ import { Pool } from "pg";
  *      the account named below and nobody else. Anybody can enter a figure;
  *      only one person can make one disappear.
  *
- *   2. A FRESH SIGN-IN. Firebase silently refreshes an ID token every hour,
- *      so a valid token proves the session is alive and nothing more. The
- *      `auth_time` claim only moves when a human actually signs in or
- *      re-authenticates, so requiring it to be recent is a check the SERVER
- *      can make. A "confirm it's you" prompt that only sets a flag in the
- *      browser proves nothing to anyone; this proves it to the database.
+ *   2. A SIX-DIGIT PIN. Not a fresh sign-in, which was the previous control
+ *      and the weaker one for the threat that matters: somebody at an
+ *      unlocked laptop with a live session, or holding the Google password.
+ *      Re-authenticating with Google may simply succeed for both. A PIN is a
+ *      different KIND of secret -- known rather than signed into -- so it
+ *      holds exactly where the other gives way.
+ *
+ *      Six digits is only a million combinations, so the LOCKOUT is what
+ *      makes it defensible: five wrong tries and it locks for fifteen
+ *      minutes, counted in the database where clearing browser state cannot
+ *      reach it. At that rate a million guesses takes about six years.
  *
  * NOTHING IS TRULY DESTROYED. The whole row is copied into deleted_records
  * first, so a restore is an INSERT of exactly what was there -- same id, same
@@ -30,9 +35,35 @@ export function createUndoRouter(pool: Pool) {
     'allowancemobielapp@gmail.com',
   ];
 
-  // Long enough to find the row and think about it; short enough that an
-  // unattended laptop is not a licence to erase the books.
-  const REAUTH_WINDOW_SECONDS = 5 * 60;
+  /**
+   * Check the PIN that came with this request.
+   *
+   * Sent in a header rather than the body so the same check works on a
+   * DELETE, which has no body to put it in.
+   */
+  const pinOk = async (req: any): Promise<{ ok: boolean; error?: string }> => {
+    const pin = String(req.headers['x-admin-pin'] || req.body?.pin || '');
+    if (!pin) return { ok: false, error: 'PIN_REQUIRED' };
+
+    const r = await pool.query('SELECT * FROM verify_admin_pin($1, $2)',
+                               [req.adminEmail, pin]);
+    const v = r.rows[0] || {};
+    if (v.ok) return { ok: true };
+
+    if (v.reason === 'no_pin_set') return { ok: false, error: 'NO_PIN_SET' };
+    if (v.reason === 'locked') {
+      const mins = Math.ceil(Number(v.locked_seconds || 0) / 60);
+      return { ok: false,
+               error: `Too many wrong attempts. Locked for ${mins} more minute`
+                    + `${mins === 1 ? '' : 's'}.` };
+    }
+    // locked_seconds carries the attempts remaining on a wrong PIN, so the
+    // person knows how close they are to a lockout before they hit it.
+    const left = Number(v.locked_seconds || 0);
+    return { ok: false,
+             error: `Wrong PIN. ${left} attempt${left === 1 ? '' : 's'} left `
+                  + 'before it locks for fifteen minutes.' };
+  };
 
   const handle = (fn: any) => async (req: any, res: any) => {
     try { await fn(req, res); }
@@ -110,22 +141,79 @@ export function createUndoRouter(pool: Pool) {
       });
     }
 
-    const authTime = Number(req.authTime || 0);
-    const age = Math.floor(Date.now() / 1000) - authTime;
-
-    if (!authTime || age > REAUTH_WINDOW_SECONDS) {
-      return res.status(401).json({
-        error: 'Confirm it is you before deleting anything. This needs a '
-             + 'sign-in from the last five minutes.',
-        code: 'REAUTH_REQUIRED',
-        // The client uses this to say how stale the session is rather than
-        // just asserting that it is.
-        signed_in_seconds_ago: authTime ? age : null,
-      });
+    const check = await pinOk(req);
+    if (!check.ok) {
+      if (check.error === 'PIN_REQUIRED') {
+        return res.status(401).json({
+          error: 'Enter your six-digit PIN to delete a record.',
+          code: 'PIN_REQUIRED',
+        });
+      }
+      if (check.error === 'NO_PIN_SET') {
+        return res.status(401).json({
+          error: 'No PIN has been set on this account yet. Set one before '
+               + 'deleting anything.',
+          code: 'NO_PIN_SET',
+        });
+      }
+      return res.status(401).json({ error: check.error, code: 'BAD_PIN' });
     }
 
     await fn(req, res);
   });
+
+  /** Does this account have a PIN, and is it currently locked? */
+  router.get('/pin', handle(async (req: any, res: any) => {
+    const email = String(req.adminEmail || '').toLowerCase();
+    const r = await pool.query('SELECT * FROM admin_pin_status($1)', [email]);
+    res.json({
+      ...r.rows[0],
+      is_super_admin: SUPER_ADMINS.includes(email),
+    });
+  }));
+
+  /**
+   * Set or change it.
+   *
+   * Changing an existing PIN needs the current one -- enforced in
+   * set_admin_pin, not here, so it cannot be skipped by another caller.
+   * Setting a FIRST PIN needs a fresh sign-in instead, because there is no
+   * older secret to prove with and something has to stand in its place.
+   */
+  router.post('/pin', handle(async (req: any, res: any) => {
+    const email = String(req.adminEmail || '').toLowerCase();
+    if (!SUPER_ADMINS.includes(email)) {
+      return res.status(403).json({
+        error: 'Only the super admin needs a PIN.' });
+    }
+
+    const { pin, current_pin } = req.body;
+    const existing = await pool.query(
+      'SELECT has_pin FROM admin_pin_status($1)', [email]);
+
+    if (!existing.rows[0]?.has_pin) {
+      const authTime = Number(req.authTime || 0);
+      const age = Math.floor(Date.now() / 1000) - authTime;
+      if (!authTime || age > 15 * 60) {
+        return res.status(401).json({
+          error: 'Sign in again before setting your first PIN. After that the '
+               + 'PIN itself is what authorises changes.',
+          code: 'REAUTH_REQUIRED',
+        });
+      }
+    }
+
+    try {
+      await pool.query('SELECT set_admin_pin($1, $2, $3)',
+                       [email, pin, current_pin || null]);
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    await audit(req, 'admin.pin.set', 'admin_pins', email, null,
+                { changed: existing.rows[0]?.has_pin === true });
+    res.json({ ok: true });
+  }));
 
   /** What is deletable, so the UI does not have to hardcode the list. */
   router.get('/entities', handle(async (_req: any, res: any) => {

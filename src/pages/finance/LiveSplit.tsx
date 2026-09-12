@@ -112,7 +112,7 @@ export function LiveSplitTab({ get, period, role }: any) {
           <Empty>No shareholders on the register yet.</Empty>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[36rem]">
               <thead className="bg-slate-50 dark:bg-slate-800/50">
                 <tr>
                   <Th>Shareholder</Th>
@@ -169,23 +169,25 @@ export function LiveSplitTab({ get, period, role }: any) {
         {data.streams.length === 0 ? (
           <Empty>Nothing came in during this period.</Empty>
         ) : (
-          <table className="w-full">
-            <thead className="bg-slate-50 dark:bg-slate-800/50">
-              <tr><Th>Stream</Th><Th right>Payments</Th><Th right>Average</Th><Th right>Total</Th></tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {data.streams.map((s: any) => (
-                <tr key={s.stream}>
-                  <Td>{s.stream}</Td>
-                  <Td right mono className="text-slate-500">{s.payments}</Td>
-                  <Td right mono className="text-slate-500">
-                    {s.payments > 0 ? naira(s.total / s.payments) : '—'}
-                  </Td>
-                  <Td right mono bold>{naira(s.total)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto -mx-px">
+            <table className="w-full min-w-[36rem]">
+              <thead className="bg-slate-50 dark:bg-slate-800/50">
+                <tr><Th>Stream</Th><Th right>Payments</Th><Th right>Average</Th><Th right>Total</Th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {data.streams.map((s: any) => (
+                  <tr key={s.stream}>
+                    <Td>{s.stream}</Td>
+                    <Td right mono className="text-slate-500">{s.payments}</Td>
+                    <Td right mono className="text-slate-500">
+                      {s.payments > 0 ? naira(s.total / s.payments) : '—'}
+                    </Td>
+                    <Td right mono bold>{naira(s.total)}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         <div className="p-4 border-t border-slate-200 dark:border-slate-800">
           <p className="text-xs text-slate-500">

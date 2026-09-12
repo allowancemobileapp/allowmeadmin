@@ -400,7 +400,7 @@ function Holders({ rows, kind, onRevoke, busy }: any) {
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full min-w-[36rem]">
           <thead className="bg-slate-50 dark:bg-slate-800/50">
             <tr>
               {['Person', 'Campus', 'Phone', 'Since', '', ''].map((h, i) => (

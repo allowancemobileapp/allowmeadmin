@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { PinSettings } from '../components/AdminPin';
 import { useApi } from '../hooks/useApi';
 import { Admin } from '../types';
 
@@ -223,6 +224,10 @@ export default function Admins() {
         <p className="text-sm text-slate-500 mt-1">Authorize new team members to access the workspace.</p>
       </div>
 
+      <div className="max-w-xl">
+        <PinSettings get={get} post={post} />
+      </div>
+
       <div className={`bg-white dark:bg-slate-900 border rounded-xl shadow-sm p-6 ${editingId ? 'border-2 border-indigo-500 ring-4 ring-indigo-50' : 'border-slate-200 dark:border-slate-800'}`}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">{editingId ? 'Edit Access' : 'Grant Access'}</h2>
@@ -359,7 +364,7 @@ export default function Admins() {
       </div>
 
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-x-auto overflow-hidden">
-        <table className="w-full text-left text-sm whitespace-nowrap">
+        <table className="w-full min-w-[40rem] text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
             <tr>
               <th className="px-6 py-3 font-bold uppercase tracking-wider text-xs">Email</th>

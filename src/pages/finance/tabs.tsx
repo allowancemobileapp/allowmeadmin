@@ -99,72 +99,74 @@ export function GrossProfitTab({ get, post, put, role }: any) {
             </p>
           </div>
 
-          <table className="w-full">
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {/* The streams behind the collections line. Without these the
-                  top figure is unauditable -- you cannot tell a quiet month
-                  from a stream that stopped reporting. */}
-              {(draft.breakdown?.automatic || []).map((a: any) => (
-                <tr key={'auto-' + a.slug} className="bg-slate-50/50 dark:bg-slate-800/20">
-                  <Td>
-                    <span className="text-slate-300 font-mono mr-2 pl-4">↳</span>
-                    <span className="text-xs text-slate-500">
-                      {a.stream}
-                      <span className="ml-2 text-slate-400">
-                        {a.payments} payment{a.payments === 1 ? '' : 's'}
-                        {a.payments > 0 &&
-                          ` · avg ${fmtKobo(Math.round(a.collected / a.payments))}`}
-                      </span>
-                      {a.thirdParty > 0 && (
-                        <span className="block text-amber-600 dark:text-amber-500 mt-0.5">
-                          {fmtKobo(a.thirdParty)} of this is the organiser's —
-                          the company keeps {fmtKobo(a.company)}
+          <div className="overflow-x-auto -mx-px">
+            <table className="w-full min-w-[36rem]">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {/* The streams behind the collections line. Without these the
+                    top figure is unauditable -- you cannot tell a quiet month
+                    from a stream that stopped reporting. */}
+                {(draft.breakdown?.automatic || []).map((a: any) => (
+                  <tr key={'auto-' + a.slug} className="bg-slate-50/50 dark:bg-slate-800/20">
+                    <Td>
+                      <span className="text-slate-300 font-mono mr-2 pl-4">↳</span>
+                      <span className="text-xs text-slate-500">
+                        {a.stream}
+                        <span className="ml-2 text-slate-400">
+                          {a.payments} payment{a.payments === 1 ? '' : 's'}
+                          {a.payments > 0 &&
+                            ` · avg ${fmtKobo(Math.round(a.collected / a.payments))}`}
                         </span>
-                      )}
-                    </span>
-                  </Td>
-                  <Td right mono className="text-xs text-slate-500">
-                    {fmtKobo(a.collected)}
+                        {a.thirdParty > 0 && (
+                          <span className="block text-amber-600 dark:text-amber-500 mt-0.5">
+                            {fmtKobo(a.thirdParty)} of this is the organiser's —
+                            the company keeps {fmtKobo(a.company)}
+                          </span>
+                        )}
+                      </span>
+                    </Td>
+                    <Td right mono className="text-xs text-slate-500">
+                      {fmtKobo(a.collected)}
+                    </Td>
+                  </tr>
+                ))}
+                {(draft.breakdown?.manual || []).map((m: any) => (
+                  <tr key={'man-' + m.slug} className="bg-slate-50/50 dark:bg-slate-800/20">
+                    <Td>
+                      <span className="text-slate-300 font-mono mr-2 pl-4">↳</span>
+                      <span className="text-xs text-slate-500">
+                        {m.stream}
+                        <span className="ml-2 text-amber-600">entered by hand</span>
+                      </span>
+                    </Td>
+                    <Td right mono className="text-xs text-slate-500">
+                      {fmtKobo(m.collected)}
+                    </Td>
+                  </tr>
+                ))}
+                {lines.map((l) => (
+                  <tr key={l.label}>
+                    <Td>
+                      <span className="text-slate-400 font-mono mr-2">{l.sign}</span>
+                      <span className="text-slate-700 dark:text-slate-300">{l.label}</span>
+                    </Td>
+                    <Td right mono className={l.amount < 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-slate-800 dark:text-slate-200'}>
+                      {fmtKobo(Math.abs(l.amount))}
+                    </Td>
+                  </tr>
+                ))}
+                <tr className="bg-slate-50 dark:bg-slate-800/50">
+                  <Td bold>Monthly Gross Profit</Td>
+                  <Td right mono bold className={draft.grossProfit >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400 text-lg'
+                    : 'text-rose-600 dark:text-rose-400 text-lg'}>
+                    {fmtKobo(draft.grossProfit)}
                   </Td>
                 </tr>
-              ))}
-              {(draft.breakdown?.manual || []).map((m: any) => (
-                <tr key={'man-' + m.slug} className="bg-slate-50/50 dark:bg-slate-800/20">
-                  <Td>
-                    <span className="text-slate-300 font-mono mr-2 pl-4">↳</span>
-                    <span className="text-xs text-slate-500">
-                      {m.stream}
-                      <span className="ml-2 text-amber-600">entered by hand</span>
-                    </span>
-                  </Td>
-                  <Td right mono className="text-xs text-slate-500">
-                    {fmtKobo(m.collected)}
-                  </Td>
-                </tr>
-              ))}
-              {lines.map((l) => (
-                <tr key={l.label}>
-                  <Td>
-                    <span className="text-slate-400 font-mono mr-2">{l.sign}</span>
-                    <span className="text-slate-700 dark:text-slate-300">{l.label}</span>
-                  </Td>
-                  <Td right mono className={l.amount < 0
-                    ? 'text-rose-600 dark:text-rose-400'
-                    : 'text-slate-800 dark:text-slate-200'}>
-                    {fmtKobo(Math.abs(l.amount))}
-                  </Td>
-                </tr>
-              ))}
-              <tr className="bg-slate-50 dark:bg-slate-800/50">
-                <Td bold>Monthly Gross Profit</Td>
-                <Td right mono bold className={draft.grossProfit >= 0
-                  ? 'text-emerald-600 dark:text-emerald-400 text-lg'
-                  : 'text-rose-600 dark:text-rose-400 text-lg'}>
-                  {fmtKobo(draft.grossProfit)}
-                </Td>
-              </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
 
           {draft.collections === 0 && (
             <div className="px-5 pt-4">
@@ -212,7 +214,7 @@ export function GrossProfitTab({ get, post, put, role }: any) {
         </div>
         {history.length === 0 ? <Empty>Nothing certified yet.</Empty> : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[36rem]">
               <thead className="bg-slate-50 dark:bg-slate-800/50">
                 <tr><Th>Month</Th><Th>Version</Th><Th>Status</Th>
                     <Th right>Gross profit</Th><Th>Band</Th><Th>Certified by</Th></tr>
@@ -328,7 +330,7 @@ export function PayrollTab({ get, post, role }: any) {
           <Empty>Nothing for this month. Certify the month's gross profit first.</Empty>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[36rem]">
               <thead className="bg-slate-50 dark:bg-slate-800/50">
                 <tr><Th>Person</Th><Th>Band</Th><Th right>Full</Th><Th right>Cash due</Th>
                     <Th right>Paid</Th><Th right>Accrued</Th><Th>Status</Th><Th></Th></tr>
@@ -423,7 +425,7 @@ export function PayrollTab({ get, post, role }: any) {
           </p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[36rem]">
             <thead className="bg-slate-50 dark:bg-slate-800/50">
               <tr><Th>Person</Th><Th right>Accrued</Th><Th right>Paid</Th>
                   <Th right>Balance</Th><Th right>Cap</Th><Th></Th></tr>
@@ -565,7 +567,7 @@ export function MilestonesTab({ get, post, put, role }: any) {
 
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[36rem]">
                 <thead className="bg-slate-50 dark:bg-slate-800/50">
                   <tr><Th>Holder</Th><Th right>Class A</Th><Th right>Class B</Th>
                       <Th right>Total</Th><Th right>Economic</Th><Th right>Voting</Th></tr>

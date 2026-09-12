@@ -183,133 +183,135 @@ export default function Logs() {
 
         {/* Table */}
         <div className="flex-1 overflow-y-auto rounded-lg" style={{ backgroundColor: '#222' }}>
-          <table className="w-full text-left border-collapse text-sm">
-            <thead className="sticky top-0 z-10" style={{ backgroundColor: '#2a2a2a' }}>
-              <tr>
-                <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">Time</th>
-                <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">User ID</th>
-                <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">Action</th>
-                <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredLogs.length > 0 ? (
-                filteredLogs.map(log => (
-                  <tr key={log.id} className="border-b border-[#444] hover:bg-[#333] transition-colors">
-                    <td className="p-4 whitespace-nowrap text-[#bbb]">
-                      {new Date(log.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
-                    </td>
-                    <td className="p-4 font-bold text-white">
-                      {(log as any).user_email || (log as any).admin_email || 'anonymous'}
-                    </td>
-                    <td className="p-4">
-                      <span className="text-[#0dcaf0] font-medium block mb-1">
-                        {(() => {
-                           const isAppLog = 'action_summary' in log;
-                           if (!isAppLog) return log.action || 'Unknown Action';
+          <div className="overflow-x-auto -mx-px">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead className="sticky top-0 z-10" style={{ backgroundColor: '#2a2a2a' }}>
+                <tr>
+                  <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">Time</th>
+                  <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">User ID</th>
+                  <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">Action</th>
+                  <th className="font-semibold p-4 border-b border-[#444] text-[#ccc]">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLogs.length > 0 ? (
+                  filteredLogs.map(log => (
+                    <tr key={log.id} className="border-b border-[#444] hover:bg-[#333] transition-colors">
+                      <td className="p-4 whitespace-nowrap text-[#bbb]">
+                        {new Date(log.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </td>
+                      <td className="p-4 font-bold text-white">
+                        {(log as any).user_email || (log as any).admin_email || 'anonymous'}
+                      </td>
+                      <td className="p-4">
+                        <span className="text-[#0dcaf0] font-medium block mb-1">
+                          {(() => {
+                             const isAppLog = 'action_summary' in log;
+                             if (!isAppLog) return log.action || 'Unknown Action';
                            
-                           const rawAction = log.action_summary || (log as any).action || 'Unknown Action';
+                             const rawAction = log.action_summary || (log as any).action || 'Unknown Action';
                            
-                           // Extract the row data from the details payload depending on how it's structured
-                           const extra = log.details?.log_details?.extra || log.details?.extra || log.details;
-                           if (!extra || Object.keys(extra).length === 0) return rawAction;
+                             // Extract the row data from the details payload depending on how it's structured
+                             const extra = log.details?.log_details?.extra || log.details?.extra || log.details;
+                             if (!extra || Object.keys(extra).length === 0) return rawAction;
 
-                           switch(rawAction) {
-                            case 'profiles_UPDATE': {
-                              const old = log.details?.log_details?.old || log.details?.old;
-                              if (old && typeof old === 'object' && extra && typeof extra === 'object') {
-                                const changes: string[] = [];
-                                if (old.username !== extra.username) changes.push(`Username (${old.username || 'none'} -> ${extra.username || 'none'})`);
-                                if (old.avatar_url !== extra.avatar_url) changes.push(extra.avatar_url ? 'Added Photo' : 'Removed Photo');
-                                if (old.bio !== extra.bio) changes.push('Updated Bio');
-                                if (old.school_name !== extra.school_name) changes.push(`School (${old.school_name || 'none'} -> ${extra.school_name || 'none'})`);
-                                if (old.full_name !== extra.full_name) changes.push(`Name (${old.full_name || 'none'} -> ${extra.full_name || 'none'})`);
-                                if (old.phone_number !== extra.phone_number) changes.push('Updated Phone');
+                             switch(rawAction) {
+                              case 'profiles_UPDATE': {
+                                const old = log.details?.log_details?.old || log.details?.old;
+                                if (old && typeof old === 'object' && extra && typeof extra === 'object') {
+                                  const changes: string[] = [];
+                                  if (old.username !== extra.username) changes.push(`Username (${old.username || 'none'} -> ${extra.username || 'none'})`);
+                                  if (old.avatar_url !== extra.avatar_url) changes.push(extra.avatar_url ? 'Added Photo' : 'Removed Photo');
+                                  if (old.bio !== extra.bio) changes.push('Updated Bio');
+                                  if (old.school_name !== extra.school_name) changes.push(`School (${old.school_name || 'none'} -> ${extra.school_name || 'none'})`);
+                                  if (old.full_name !== extra.full_name) changes.push(`Name (${old.full_name || 'none'} -> ${extra.full_name || 'none'})`);
+                                  if (old.phone_number !== extra.phone_number) changes.push('Updated Phone');
                                 
-                                if (changes.length > 0) {
-                                  return `Updated Profile: Changed ${changes.join(', ')}`;
+                                  if (changes.length > 0) {
+                                    return `Updated Profile: Changed ${changes.join(', ')}`;
+                                  }
+                                  return `Updated Profile (No visible changes)`;
                                 }
-                                return `Updated Profile (No visible changes)`;
+                                return `Updated Profile (Username: ${extra.username || 'None'}, Bio: ${extra.bio ? 'Set' : 'Empty'}, Photo: ${extra.avatar_url ? 'Yes' : 'No'}, School: ${extra.school_name || 'N/A'})`;
                               }
-                              return `Updated Profile (Username: ${extra.username || 'None'}, Bio: ${extra.bio ? 'Set' : 'Empty'}, Photo: ${extra.avatar_url ? 'Yes' : 'No'}, School: ${extra.school_name || 'N/A'})`;
-                            }
-                            case 'gists_INSERT':
-                              return `Created Gist/Post ("${extra.title ? extra.title.substring(0, 30) : '?'}${extra.title && extra.title.length > 30 ? '...' : ''}")`;
-                            case 'gists_UPDATE': {
-                              const old = log.details?.log_details?.old || log.details?.old;
-                              if (old && typeof old === 'object' && extra && typeof extra === 'object') {
-                                const changes: string[] = [];
-                                if (old.title !== extra.title) changes.push('Title');
-                                if (old.status !== extra.status) changes.push(`Status (${old.status} -> ${extra.status})`);
-                                if (old.price_per_day !== extra.price_per_day) changes.push(`Price`);
-                                if (old.image_url !== extra.image_url) changes.push(`Image`);
-                                if (changes.length > 0) return `Updated Gist/Post ("${extra.title?.substring(0, 20)}"): Changed ${changes.join(', ')}`;
+                              case 'gists_INSERT':
+                                return `Created Gist/Post ("${extra.title ? extra.title.substring(0, 30) : '?'}${extra.title && extra.title.length > 30 ? '...' : ''}")`;
+                              case 'gists_UPDATE': {
+                                const old = log.details?.log_details?.old || log.details?.old;
+                                if (old && typeof old === 'object' && extra && typeof extra === 'object') {
+                                  const changes: string[] = [];
+                                  if (old.title !== extra.title) changes.push('Title');
+                                  if (old.status !== extra.status) changes.push(`Status (${old.status} -> ${extra.status})`);
+                                  if (old.price_per_day !== extra.price_per_day) changes.push(`Price`);
+                                  if (old.image_url !== extra.image_url) changes.push(`Image`);
+                                  if (changes.length > 0) return `Updated Gist/Post ("${extra.title?.substring(0, 20)}"): Changed ${changes.join(', ')}`;
+                                }
+                                return `Updated Gist/Post ("${extra.title ? extra.title.substring(0, 30) : '?'}${extra.title && extra.title.length > 30 ? '...' : ''}")`;
                               }
-                              return `Updated Gist/Post ("${extra.title ? extra.title.substring(0, 30) : '?'}${extra.title && extra.title.length > 30 ? '...' : ''}")`;
-                            }
-                            case 'tickets_INSERT':
-                              return `Created Ticket Event ("${extra.name ? extra.name.substring(0, 30) : '?'}") - Price: ₦${extra.price || 0}`;
-                            case 'tickets_UPDATE': {
-                              const old = log.details?.log_details?.old || log.details?.old;
-                              if (old && typeof old === 'object' && extra && typeof extra === 'object') {
-                                const changes: string[] = [];
-                                if (old.name !== extra.name) changes.push('Name');
-                                if (old.price !== extra.price) changes.push(`Price (₦${old.price} -> ₦${extra.price})`);
-                                if (old.status !== extra.status) changes.push(`Status (${old.status} -> ${extra.status})`);
-                                if (old.tickets_remaining !== extra.tickets_remaining) changes.push(`Capacity (${old.tickets_remaining} -> ${extra.tickets_remaining})`);
-                                if (changes.length > 0) return `Updated Ticket Event ("${extra.name?.substring(0, 20)}"): Changed ${changes.join(', ')}`;
+                              case 'tickets_INSERT':
+                                return `Created Ticket Event ("${extra.name ? extra.name.substring(0, 30) : '?'}") - Price: ₦${extra.price || 0}`;
+                              case 'tickets_UPDATE': {
+                                const old = log.details?.log_details?.old || log.details?.old;
+                                if (old && typeof old === 'object' && extra && typeof extra === 'object') {
+                                  const changes: string[] = [];
+                                  if (old.name !== extra.name) changes.push('Name');
+                                  if (old.price !== extra.price) changes.push(`Price (₦${old.price} -> ₦${extra.price})`);
+                                  if (old.status !== extra.status) changes.push(`Status (${old.status} -> ${extra.status})`);
+                                  if (old.tickets_remaining !== extra.tickets_remaining) changes.push(`Capacity (${old.tickets_remaining} -> ${extra.tickets_remaining})`);
+                                  if (changes.length > 0) return `Updated Ticket Event ("${extra.name?.substring(0, 20)}"): Changed ${changes.join(', ')}`;
+                                }
+                                return `Updated Ticket Event ("${extra.name ? extra.name.substring(0, 30) : '?'}")`;
                               }
-                              return `Updated Ticket Event ("${extra.name ? extra.name.substring(0, 30) : '?'}")`;
-                            }
-                            case 'ticket_purchases_INSERT':
-                              return `Purchased Ticket (Event ID: ${extra.ticket_id || '?'})`;
-                            case 'story_likes_INSERT':
-                              return `Liked Story (Story ID: ${extra.story_id || '?'})`;
-                            case 'gist_likes_INSERT':
-                              return `Liked Gist (Gist ID: ${extra.gist_id || '?'})`;
-                            case 'gist_comments_INSERT':
-                              return `Commented on Gist: "${typeof extra.text === 'string' ? extra.text.substring(0, 30) + (extra.text.length > 30 ? '...' : '') : '?'}"`;
-                            case 'messages_INSERT':
-                              return `Sent Message in Chat (Chat ID: ${extra.chat_id || '?'})`;
-                           }
+                              case 'ticket_purchases_INSERT':
+                                return `Purchased Ticket (Event ID: ${extra.ticket_id || '?'})`;
+                              case 'story_likes_INSERT':
+                                return `Liked Story (Story ID: ${extra.story_id || '?'})`;
+                              case 'gist_likes_INSERT':
+                                return `Liked Gist (Gist ID: ${extra.gist_id || '?'})`;
+                              case 'gist_comments_INSERT':
+                                return `Commented on Gist: "${typeof extra.text === 'string' ? extra.text.substring(0, 30) + (extra.text.length > 30 ? '...' : '') : '?'}"`;
+                              case 'messages_INSERT':
+                                return `Sent Message in Chat (Chat ID: ${extra.chat_id || '?'})`;
+                             }
                            
-                           if (rawAction.endsWith('_INSERT')) return `Added to ${rawAction.replace('_INSERT', '')} (ID: ${extra.id || '?'})`;
-                           if (rawAction.endsWith('_UPDATE')) return `Updated ${rawAction.replace('_UPDATE', '')} (ID: ${extra.id || '?'})`;
-                           if (rawAction.endsWith('_DELETE')) return `Deleted from ${rawAction.replace('_DELETE', '')} (ID: ${extra.id || '?'})`;
+                             if (rawAction.endsWith('_INSERT')) return `Added to ${rawAction.replace('_INSERT', '')} (ID: ${extra.id || '?'})`;
+                             if (rawAction.endsWith('_UPDATE')) return `Updated ${rawAction.replace('_UPDATE', '')} (ID: ${extra.id || '?'})`;
+                             if (rawAction.endsWith('_DELETE')) return `Deleted from ${rawAction.replace('_DELETE', '')} (ID: ${extra.id || '?'})`;
 
-                           return rawAction;
-                        })()}
-                      </span>
-                      {('action_summary' in log) && (
-                        <div className="text-[10px] text-slate-500 font-mono mt-1">Raw: {(log as any).action_summary}</div>
-                      )}
-                    </td>
-                    <td className="p-4 text-[#bbb] font-mono text-xs max-w-md">
-                      <div className="flex flex-col items-start gap-2">
-                        <button 
-                          onClick={() => toggleDetails(log.id)}
-                          className="bg-[#333] hover:bg-[#444] text-[#ddd] px-3 py-1.5 rounded transition-colors"
-                        >
-                          {expandedDetails[log.id] ? 'Hide Details' : 'See Details'}
-                        </button>
-                        {expandedDetails[log.id] && (
-                          <div className="mt-2 w-full max-h-40 overflow-y-auto break-all whitespace-pre-wrap bg-[#1a1a1a] p-3 rounded text-[#0dcaf0] border border-[#333]">
-                            {JSON.stringify(log.details, null, 2)}
-                          </div>
+                             return rawAction;
+                          })()}
+                        </span>
+                        {('action_summary' in log) && (
+                          <div className="text-[10px] text-slate-500 font-mono mt-1">Raw: {(log as any).action_summary}</div>
                         )}
-                      </div>
+                      </td>
+                      <td className="p-4 text-[#bbb] font-mono text-xs max-w-md">
+                        <div className="flex flex-col items-start gap-2">
+                          <button 
+                            onClick={() => toggleDetails(log.id)}
+                            className="bg-[#333] hover:bg-[#444] text-[#ddd] px-3 py-1.5 rounded transition-colors"
+                          >
+                            {expandedDetails[log.id] ? 'Hide Details' : 'See Details'}
+                          </button>
+                          {expandedDetails[log.id] && (
+                            <div className="mt-2 w-full max-h-40 overflow-y-auto break-all whitespace-pre-wrap bg-[#1a1a1a] p-3 rounded text-[#0dcaf0] border border-[#333]">
+                              {JSON.stringify(log.details, null, 2)}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={4} className="p-8 text-center text-[#bbb] italic">
+                      No logs found matching your criteria.
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={4} className="p-8 text-center text-[#bbb] italic">
-                    No logs found matching your criteria.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Exports */}

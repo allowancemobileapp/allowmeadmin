@@ -3,7 +3,8 @@ import {
   Card, Field, Empty, Note, Th, Td, inputCls, btnCls, btnGhost,
 } from './ui';
 import { Trash2, Undo2, ShieldAlert, History } from 'lucide-react';
-import { auth, loginWithGoogle } from '../../firebase';
+import { auth } from '../../firebase';
+import { PinPrompt, PinSettings } from '../../components/AdminPin';
 
 const day = (d: string) =>
   new Date(d).toLocaleString('en-NG',
@@ -13,14 +14,15 @@ const day = (d: string) =>
 /**
  * Deleting a record, and putting it back.
  *
- * WHY RE-AUTHENTICATION IS NOT A CHECKBOX. Firebase refreshes the ID token
- * every hour on its own, so a live session proves somebody signed in at some
- * point, not that the person at the keyboard right now is the account holder.
- * The `auth_time` claim only moves when a human actually signs in, and it is
- * inside the signature -- so the SERVER checks it. A "confirm it's you"
- * prompt that only sets a flag in the browser proves nothing to anybody; this
- * one cannot be skipped by editing local state, because local state is not
- * what is being read.
+ * WHY A PIN RATHER THAN A FRESH SIGN-IN. The threat worth defending against
+ * is somebody at an unlocked laptop with a live session, or somebody holding
+ * the Google password. "Re-authenticate with Google" may simply succeed for
+ * both of them. A PIN is a different KIND of secret -- known rather than
+ * signed into -- so it holds exactly where the other gives way.
+ *
+ * It is checked in the database, never here, and five wrong attempts locks it
+ * for fifteen minutes with the counter server-side. That lockout is what
+ * makes six digits defensible rather than a million-guess formality.
  *
  * NOTHING IS DESTROYED. The whole row is kept, so a restore puts back exactly
  * what was there -- same id, same values.
@@ -35,7 +37,8 @@ export function DeleteRecords({ get, post }: any) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [needsReauth, setNeedsReauth] = useState(false);
+  // The action waiting on a PIN: a delete, or a restore.
+  const [pending, setPending] = useState<any>(null);
 
   // Only the super admin can do any of this, and the server is the authority.
   // Hiding the panel from everyone else is courtesy, not the control.
@@ -55,49 +58,13 @@ export function DeleteRecords({ get, post }: any) {
 
   if (!isSuper) return null;
 
-  /**
-   * Prove it is you, for real.
-   *
-   * A fresh Google sign-in moves auth_time, then getIdToken(true) forces a
-   * new token carrying it. Without the forced refresh the browser would keep
-   * handing over the old cached token and the server would rightly keep
-   * refusing.
-   */
-  const reauthenticate = async () => {
-    setBusy(true); setErr(null);
-    try {
-      await loginWithGoogle();
-      await auth.currentUser?.getIdToken(true);
-      setNeedsReauth(false);
-      setMsg('Confirmed. You have five minutes.');
-    } catch (e: any) {
-      setErr(e?.message || 'Could not confirm it is you.');
-    } finally { setBusy(false); }
-  };
-
-  const handle = async (fn: () => Promise<any>) => {
-    setBusy(true); setErr(null); setMsg(null);
-    try {
-      await fn();
-    } catch (e: any) {
-      const m = e?.message || String(e);
-      // The server says a fresh sign-in is needed. Offer it rather than
-      // leaving somebody to work out what "REAUTH_REQUIRED" means.
-      if (/sign-in from the last five minutes|Confirm it is you/i.test(m)) {
-        setNeedsReauth(true);
-        setErr('This needs a fresh sign-in. Confirm below, then try again.');
-      } else {
-        setErr(m);
-      }
-    } finally { setBusy(false); }
-  };
-
-  const doDelete = () => handle(async () => {
+  const doDelete = async (pin: string) => {
     const r = await fetch(`/api/undo/${entity}/${recordId.trim()}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${await auth.currentUser!.getIdToken()}`,
+        'x-admin-pin': pin,
       },
       body: JSON.stringify({ reason }),
     });
@@ -105,15 +72,26 @@ export function DeleteRecords({ get, post }: any) {
     if (!r.ok) throw new Error(body.error || 'Could not delete that record.');
 
     setMsg(`Deleted: ${body.description}. It can be put back below.`);
-    setRecordId(''); setReason('');
+    setRecordId(''); setReason(''); setPending(null);
     await loadDeleted();
-  });
+  };
 
-  const restore = (id: string) => handle(async () => {
-    const r = await post(`/api/undo/deleted/${id}/restore`, {});
-    setMsg(`Restored: ${r.description}`);
+  const doRestore = async (id: string, pin: string) => {
+    const r = await fetch(`/api/undo/deleted/${id}/restore`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await auth.currentUser!.getIdToken()}`,
+        'x-admin-pin': pin,
+      },
+      body: JSON.stringify({}),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || 'Could not restore that record.');
+    setMsg(`Restored: ${body.description}`);
+    setPending(null);
     await loadDeleted();
-  });
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -125,9 +103,8 @@ export function DeleteRecords({ get, post }: any) {
             Undo a record
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Only you can do this, and only with a sign-in from the last five
-            minutes. Nothing is destroyed &mdash; anything removed can be put
-            back.
+            Only you can do this, and only with your six-digit PIN. Nothing
+            is destroyed &mdash; anything removed can be put back.
           </p>
         </div>
         <span className="text-xs font-bold text-slate-400">
@@ -137,19 +114,7 @@ export function DeleteRecords({ get, post }: any) {
 
       {open && (
         <div className="p-5 border-t border-slate-200 dark:border-slate-800 space-y-4">
-          {needsReauth && (
-            <Note tone="amber" title="Confirm it is you.">
-              <p className="mb-3">
-                A live session is not proof that you are the one at the
-                keyboard &mdash; the token refreshes itself every hour. Sign in
-                again and the server can see that you did.
-              </p>
-              <button onClick={reauthenticate} disabled={busy} className={btnCls}>
-                {busy ? 'Confirming…'
-                      : `Sign in as ${auth.currentUser?.email || 'yourself'}`}
-              </button>
-            </Note>
-          )}
+          <PinSettings get={get} post={post} />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Kind of record">
@@ -176,7 +141,8 @@ export function DeleteRecords({ get, post }: any) {
           {err && <p className="text-sm text-rose-600 font-medium">{err}</p>}
           {msg && <p className="text-sm text-emerald-600 font-medium">{msg}</p>}
 
-          <button onClick={doDelete} disabled={busy || !recordId.trim()}
+          <button onClick={() => setPending({ kind: 'delete' })}
+                  disabled={busy || !recordId.trim()}
                   className={btnCls + ' bg-rose-600 hover:bg-rose-500'}>
             <Trash2 className="w-4 h-4 inline mr-1.5 -mt-0.5" />
             {busy ? 'Working…' : 'Delete this record'}
@@ -193,7 +159,7 @@ export function DeleteRecords({ get, post }: any) {
               <p className="text-xs text-slate-500">Nothing has been deleted.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[36rem]">
                   <thead className="bg-slate-50 dark:bg-slate-800/50">
                     <tr>
                       <Th>What</Th><Th>Kind</Th><Th>When</Th><Th>Why</Th><Th></Th>
@@ -214,7 +180,8 @@ export function DeleteRecords({ get, post }: any) {
                               put back
                             </span>
                           ) : (
-                            <button onClick={() => restore(d.id)} disabled={busy}
+                            <button onClick={() => setPending({ kind: 'restore', id: d.id, what: d.description })}
+                                    disabled={busy}
                                     className={btnGhost}>
                               <Undo2 className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
                               Put it back
@@ -229,6 +196,16 @@ export function DeleteRecords({ get, post }: any) {
             )}
           </div>
         </div>
+      )}
+      {pending && (
+        <PinPrompt
+          title={pending.kind === 'delete' ? 'Delete this record' : 'Put it back'}
+          action={pending.kind === 'delete'
+            ? `${entity} ${recordId}. It is kept and can be restored.`
+            : pending.what}
+          onClose={() => setPending(null)}
+          onConfirm={(pin) => pending.kind === 'delete'
+            ? doDelete(pin) : doRestore(pending.id, pin)} />
       )}
     </Card>
   );

@@ -180,7 +180,7 @@ export function GatewayFees({ get, post, put, role }: any) {
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[36rem]">
             <thead className="bg-slate-50 dark:bg-slate-800/50">
               <tr>
                 <Th>Month</Th><Th right>Txns</Th><Th right>Charged</Th>

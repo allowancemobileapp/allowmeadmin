@@ -4573,7 +4573,29 @@ function createUndoRouter(pool2) {
     "allowancemobileapp@gmail.com",
     "allowancemobielapp@gmail.com"
   ];
-  const REAUTH_WINDOW_SECONDS = 5 * 60;
+  const pinOk = async (req) => {
+    const pin = String(req.headers["x-admin-pin"] || req.body?.pin || "");
+    if (!pin) return { ok: false, error: "PIN_REQUIRED" };
+    const r = await pool2.query(
+      "SELECT * FROM verify_admin_pin($1, $2)",
+      [req.adminEmail, pin]
+    );
+    const v = r.rows[0] || {};
+    if (v.ok) return { ok: true };
+    if (v.reason === "no_pin_set") return { ok: false, error: "NO_PIN_SET" };
+    if (v.reason === "locked") {
+      const mins = Math.ceil(Number(v.locked_seconds || 0) / 60);
+      return {
+        ok: false,
+        error: `Too many wrong attempts. Locked for ${mins} more minute${mins === 1 ? "" : "s"}.`
+      };
+    }
+    const left = Number(v.locked_seconds || 0);
+    return {
+      ok: false,
+      error: `Wrong PIN. ${left} attempt${left === 1 ? "" : "s"} left before it locks for fifteen minutes.`
+    };
+  };
   const handle = (fn) => async (req, res) => {
     try {
       await fn(req, res);
@@ -4646,19 +4668,72 @@ function createUndoRouter(pool2) {
         code: "NOT_SUPER_ADMIN"
       });
     }
-    const authTime = Number(req.authTime || 0);
-    const age = Math.floor(Date.now() / 1e3) - authTime;
-    if (!authTime || age > REAUTH_WINDOW_SECONDS) {
-      return res.status(401).json({
-        error: "Confirm it is you before deleting anything. This needs a sign-in from the last five minutes.",
-        code: "REAUTH_REQUIRED",
-        // The client uses this to say how stale the session is rather than
-        // just asserting that it is.
-        signed_in_seconds_ago: authTime ? age : null
-      });
+    const check = await pinOk(req);
+    if (!check.ok) {
+      if (check.error === "PIN_REQUIRED") {
+        return res.status(401).json({
+          error: "Enter your six-digit PIN to delete a record.",
+          code: "PIN_REQUIRED"
+        });
+      }
+      if (check.error === "NO_PIN_SET") {
+        return res.status(401).json({
+          error: "No PIN has been set on this account yet. Set one before deleting anything.",
+          code: "NO_PIN_SET"
+        });
+      }
+      return res.status(401).json({ error: check.error, code: "BAD_PIN" });
     }
     await fn(req, res);
   });
+  router.get("/pin", handle(async (req, res) => {
+    const email = String(req.adminEmail || "").toLowerCase();
+    const r = await pool2.query("SELECT * FROM admin_pin_status($1)", [email]);
+    res.json({
+      ...r.rows[0],
+      is_super_admin: SUPER_ADMINS2.includes(email)
+    });
+  }));
+  router.post("/pin", handle(async (req, res) => {
+    const email = String(req.adminEmail || "").toLowerCase();
+    if (!SUPER_ADMINS2.includes(email)) {
+      return res.status(403).json({
+        error: "Only the super admin needs a PIN."
+      });
+    }
+    const { pin, current_pin } = req.body;
+    const existing = await pool2.query(
+      "SELECT has_pin FROM admin_pin_status($1)",
+      [email]
+    );
+    if (!existing.rows[0]?.has_pin) {
+      const authTime = Number(req.authTime || 0);
+      const age = Math.floor(Date.now() / 1e3) - authTime;
+      if (!authTime || age > 15 * 60) {
+        return res.status(401).json({
+          error: "Sign in again before setting your first PIN. After that the PIN itself is what authorises changes.",
+          code: "REAUTH_REQUIRED"
+        });
+      }
+    }
+    try {
+      await pool2.query(
+        "SELECT set_admin_pin($1, $2, $3)",
+        [email, pin, current_pin || null]
+      );
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    await audit(
+      req,
+      "admin.pin.set",
+      "admin_pins",
+      email,
+      null,
+      { changed: existing.rows[0]?.has_pin === true }
+    );
+    res.json({ ok: true });
+  }));
   router.get("/entities", handle(async (_req, res) => {
     res.json(Object.entries(ENTITIES).map(([id, e]) => ({
       id,

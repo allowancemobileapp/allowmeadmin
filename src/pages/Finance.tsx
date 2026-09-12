@@ -475,7 +475,7 @@ function CapTableView({ data, get, post, role, onDone }: any) {
           </p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[36rem]">
             <thead className="bg-slate-50 dark:bg-slate-800/50">
               <tr><Th>Holder</Th><Th>Class</Th><Th right>Shares</Th>
                   <Th right>Owns</Th><Th right>Votes</Th></tr>
@@ -657,7 +657,7 @@ function RoundModelling({ data, get, post, put, del, role }: any) {
             )}
 
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[36rem]">
                 <thead>
                   <tr><Th>Holder</Th><Th right>Before</Th><Th right>After</Th>
                       <Th right>Given up</Th><Th right>Worth</Th></tr>
@@ -1115,7 +1115,7 @@ function AccessTab({ get }: any) {
           <h2 className="text-sm font-bold text-slate-700 dark:text-slate-300">Who can sign in</h2>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[36rem]">
             <thead className="bg-slate-50 dark:bg-slate-800/50">
               <tr><Th>Email</Th><Th>Linked to</Th><Th>Role</Th><Th>Director</Th></tr>
             </thead>
@@ -1142,7 +1142,7 @@ function AccessTab({ get }: any) {
         </div>
         {auditRows.length === 0 ? <Empty>Nothing recorded yet.</Empty> : (
           <div className="overflow-x-auto max-h-[500px]">
-            <table className="w-full">
+            <table className="w-full min-w-[36rem]">
               <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0">
                 <tr><Th>When</Th><Th>Who</Th><Th>Action</Th><Th>Entity</Th></tr>
               </thead>

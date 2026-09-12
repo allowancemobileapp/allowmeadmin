@@ -82,7 +82,7 @@ export function ExpenseTagging({ month, get, put, onChange }: any) {
       {err && <div className="px-5 pt-3"><Note tone="rose">{err}</Note></div>}
 
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full min-w-[36rem]">
           <thead className="bg-slate-50 dark:bg-slate-800/50">
             <tr><Th>Cost</Th><Th right>Amount</Th><Th>Tagged as</Th><Th>Effect</Th></tr>
           </thead>

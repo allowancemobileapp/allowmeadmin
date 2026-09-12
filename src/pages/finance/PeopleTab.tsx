@@ -91,7 +91,7 @@ export function PeopleTab({ get, post, put, del, role }: any) {
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[36rem]">
               <thead className="bg-slate-50 dark:bg-slate-800/50">
                 <tr>
                   <Th>Person</Th><Th>Access</Th><Th right>Shares</Th>

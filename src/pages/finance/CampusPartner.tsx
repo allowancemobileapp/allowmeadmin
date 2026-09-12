@@ -192,7 +192,7 @@ export function BreakdownModal({ school, period, get, onClose }: any) {
         <Empty>Nothing came in from this campus in that period.</Empty>
       ) : (
         <div className="overflow-x-auto max-h-[55vh] overflow-y-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[36rem]">
             <thead className="bg-slate-50 dark:bg-slate-800/50 sticky top-0">
               <tr>
                 <Th>When</Th><Th>Who paid</Th><Th>What for</Th>
