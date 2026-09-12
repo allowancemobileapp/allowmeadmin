@@ -27,6 +27,7 @@ import { SchoolsTab } from './finance/SchoolsTab';
 import { SharePrice } from './finance/SharePrice';
 import { DeleteRecords } from './finance/DeleteRecords';
 import { Discrepancies } from './finance/Discrepancies';
+import { Receivable } from './finance/Receivable';
 import { InvestorPicker } from './finance/Investors';
 
 /**
@@ -302,6 +303,7 @@ function Overview({ summary, series, get }: any) {
   return (
     <div className="space-y-6">
             <Discrepancies get={get} />
+      <Receivable get={get} />
 
 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <Stat label="Money in" value={fmtNaira(t.income)} icon={TrendingUp} tone="green"

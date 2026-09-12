@@ -42,6 +42,9 @@ const FINANCE_RULES: Rule[] = [
   // Subscriptions whose payments do not reconcile. Shown on Money in & out,
   // because that is where somebody looks to ask "is this figure right".
   { test: /^\/discrepancies(\/|$)/, screens: ['overview', 'reports'] },
+  // Fees earned and not yet collected. Same screens as the income they
+  // were removed from, because that is where the question arises.
+  { test: /^\/receivable(\/|$)/, screens: ['overview', 'reports'] },
   { test: /^\/revenue(\/|$)/,              screens: ['overview', 'reports'] },
   { test: /^\/income(\/|$)/,               screens: ['overview', 'record'] },
   { test: /^\/expenses(\/|$)/,

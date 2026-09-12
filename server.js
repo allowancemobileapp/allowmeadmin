@@ -1154,6 +1154,29 @@ function createFinanceRouter(pool2) {
     await logAdminAction2(req, "finance.expense.add", { title, amount, person_id });
     res.status(201).json(r.rows[0]);
   }));
+  router.get("/receivable", handleReq(async (_req, res) => {
+    try {
+      const r = await pool2.query(`
+        SELECT kind, owed_by, username, full_name, phone_number,
+               jobs, owed, oldest_unsettled
+        FROM fees_receivable ORDER BY owed DESC`);
+      res.json(r.rows.map((x) => ({
+        ...x,
+        jobs: Number(x.jobs),
+        owed: Number(x.owed),
+        // How long it has been sitting there. A fee owed since August is a
+        // different conversation from one owed since yesterday.
+        days_outstanding: x.oldest_unsettled ? Math.floor((Date.now() - new Date(x.oldest_unsettled).getTime()) / 864e5) : null
+      })));
+    } catch (e) {
+      if (e.code === "42P01") {
+        return res.status(400).json({
+          error: "Run migrations/0099_settled_income_and_fee_dating.sql."
+        });
+      }
+      throw e;
+    }
+  }));
   router.get("/gateway-fees", handleReq(async (_req, res) => {
     try {
       const [months, schedule, posted] = await Promise.all([
@@ -4322,6 +4345,9 @@ var FINANCE_RULES = [
   // Subscriptions whose payments do not reconcile. Shown on Money in & out,
   // because that is where somebody looks to ask "is this figure right".
   { test: /^\/discrepancies(\/|$)/, screens: ["overview", "reports"] },
+  // Fees earned and not yet collected. Same screens as the income they
+  // were removed from, because that is where the question arises.
+  { test: /^\/receivable(\/|$)/, screens: ["overview", "reports"] },
   { test: /^\/revenue(\/|$)/, screens: ["overview", "reports"] },
   { test: /^\/income(\/|$)/, screens: ["overview", "record"] },
   {

@@ -562,6 +562,39 @@ export function createFinanceRouter(pool: Pool) {
    * serverless connection count down.
    */
   /**
+   * Fees earned and not yet collected.
+   *
+   * 0099 stopped counting these as income, because an agent finishing a job
+   * is not the agent paying for it. That is right, but silence would be
+   * wrong -- the money is owed and somebody has to chase it. Excluded from
+   * revenue, visible as a debt.
+   */
+  router.get('/receivable', handleReq(async (_req: any, res: any) => {
+    try {
+      const r = await pool.query(`
+        SELECT kind, owed_by, username, full_name, phone_number,
+               jobs, owed, oldest_unsettled
+        FROM fees_receivable ORDER BY owed DESC`);
+      res.json(r.rows.map((x: any) => ({
+        ...x,
+        jobs: Number(x.jobs),
+        owed: Number(x.owed),
+        // How long it has been sitting there. A fee owed since August is a
+        // different conversation from one owed since yesterday.
+        days_outstanding: x.oldest_unsettled
+          ? Math.floor((Date.now() - new Date(x.oldest_unsettled).getTime()) / 86400000)
+          : null,
+      })));
+    } catch (e: any) {
+      if (e.code === '42P01') {
+        return res.status(400).json({
+          error: 'Run migrations/0099_settled_income_and_fee_dating.sql.' });
+      }
+      throw e;
+    }
+  }));
+
+  /**
    * What the payment gateway keeps.
    *
    * The bank receives less than the customer was charged, and nothing in the
