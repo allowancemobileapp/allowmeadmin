@@ -49,6 +49,10 @@ const FINANCE_RULES: Rule[] = [
 
   // -- Gross profit --------------------------------------------------------
   { test: /^\/gross-profit(\/|$)/, screens: ['grossprofit'] },
+  // The processor's cut is a deductible cost, so it belongs to whoever
+  // can see gross profit -- and to Money in & out, where the gap between
+  // charged and banked is the question being asked.
+  { test: /^\/gateway-fees(\/|$)/, screens: ['grossprofit', 'overview'] },
 
   // -- Payroll -------------------------------------------------------------
   //

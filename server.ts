@@ -752,24 +752,35 @@ app.get('/api/transactions', requireAdmin, async (req, res) => {
   try {
     // Every `amount` returned here is NAIRA. See the note on the dashboard
     // revenue query: amount_paid columns are kobo and must be divided.
+    // `verification` is the column that says whether money changed hands.
+    // Without it this table showed a free upgrade and a paid subscription as
+    // identical green "+N700" rows, and a cancellation as "+N0.00" -- which
+    // is how N7,000 of manual grants came to be read as income.
     const memRes = await pool.query(`
-      SELECT id::text, 'Membership' as type, (amount / 100.0) as amount, tier as status, payment_reference as reference, user_id::text as user_email, created_at
-      FROM membership_payments
-      ORDER BY created_at DESC LIMIT 200
+      SELECT mp.id::text, 'Membership' as type, (mp.amount / 100.0) as amount,
+             mp.tier as status, mp.payment_reference as reference,
+             COALESCE(p.username, mp.user_id::text) as user_email,
+             mp.verification, mp.created_at
+      FROM membership_payments mp
+      LEFT JOIN profiles p ON p.id::text = mp.user_id
+      ORDER BY mp.created_at DESC LIMIT 200
     `);
     // Both columns are NAIRA, so the COALESCE is safe and nothing is
     // divided. See migrations/0084_fix_money_units.sql.
     const gistRes = await pool.query(`
       SELECT id::text, 'Gist' as type,
              COALESCE(NULLIF(amount_paid, 0), total_price, 0) as amount,
-             status, payment_reference as reference, user_id::text as user_email, created_at
+             status, payment_reference as reference, user_id::text as user_email,
+             'gateway' as verification, created_at
       FROM gists
       WHERE ((amount_paid IS NOT NULL AND amount_paid > 0) OR paid = true)
         AND (payment_reference IS NULL OR payment_reference NOT ILIKE 'coupon%')
       ORDER BY created_at DESC LIMIT 200
     `);
     const ticketRes = await pool.query(`
-      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, payment_reference as reference, user_id::text as user_email, created_at
+      SELECT id::text, 'Ticket' as type, amount_paid as amount, status,
+             payment_reference as reference, user_id::text as user_email,
+             'gateway' as verification, created_at
       FROM ticket_purchases
       WHERE amount_paid IS NOT NULL AND amount_paid > 0
       ORDER BY created_at DESC LIMIT 200

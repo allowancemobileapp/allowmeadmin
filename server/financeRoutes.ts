@@ -562,6 +562,96 @@ export function createFinanceRouter(pool: Pool) {
    * serverless connection count down.
    */
   /**
+   * What the payment gateway keeps.
+   *
+   * The bank receives less than the customer was charged, and nothing in the
+   * schema held the difference -- so the app's income could never reconcile
+   * to a statement. It was always high by the processor's cut.
+   *
+   * The rate is returned alongside the figures because it is PUBLISHED
+   * pricing, not this company's contract, and the person reading the number
+   * is the only one who can check it against a Paystack dashboard.
+   */
+  router.get('/gateway-fees', handleReq(async (_req: any, res: any) => {
+    try {
+      const [months, schedule, posted] = await Promise.all([
+        pool.query('SELECT * FROM gateway_settlement'),
+        pool.query(`SELECT gateway, percent, flat_kobo, flat_waived_below_kobo,
+                           cap_kobo, note
+                      FROM payment_gateway_fees ORDER BY gateway`),
+        pool.query(`SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS rows
+                      FROM company_expenses WHERE category = 'payment_processing'`),
+      ]);
+
+      res.json({
+        months: months.rows.map((m: any) => ({
+          month: m.month,
+          transactions: Number(m.transactions),
+          charged_kobo: Number(m.charged_kobo),
+          fee_kobo: Number(m.fee_kobo),
+          net_to_bank_kobo: Number(m.net_to_bank_kobo),
+          effective_pct: Number(m.effective_pct),
+        })),
+        schedule: schedule.rows.map((r: any) => ({
+          ...r,
+          percent: Number(r.percent),
+          flat_kobo: Number(r.flat_kobo),
+          flat_waived_below_kobo: Number(r.flat_waived_below_kobo),
+          cap_kobo: r.cap_kobo === null ? null : Number(r.cap_kobo),
+        })),
+        posted_naira: Number(posted.rows[0]?.total || 0),
+        posted_rows: Number(posted.rows[0]?.rows || 0),
+      });
+    } catch (e: any) {
+      if (e.code === '42P01' || e.code === '42883') {
+        return res.status(400).json({
+          error: 'Gateway fees are not set up yet. Run '
+               + 'migrations/0097_gateway_fees.sql.',
+        });
+      }
+      throw e;
+    }
+  }));
+
+  /** Correct the rate, then recompute every month from it. */
+  router.put('/gateway-fees', handleReq(async (req: any, res: any) => {
+    const { gateway, percent, flat_kobo, flat_waived_below_kobo, cap_kobo } = req.body;
+    if (!gateway) return res.status(400).json({ error: 'Which gateway?' });
+    if (percent === undefined || Number(percent) < 0) {
+      return res.status(400).json({ error: 'A percentage is required.' });
+    }
+
+    await pool.query(`
+      UPDATE payment_gateway_fees
+         SET percent = $2, flat_kobo = $3, flat_waived_below_kobo = $4,
+             cap_kobo = $5, updated_at = now(),
+             note = COALESCE(note, '') || ' | corrected by ' || $6
+       WHERE gateway = $1`,
+      [gateway, Number(percent), Math.round(Number(flat_kobo) || 0),
+       Math.round(Number(flat_waived_below_kobo) || 0),
+       cap_kobo === null || cap_kobo === '' ? null : Math.round(Number(cap_kobo)),
+       req.adminEmail]);
+
+    // Every posted month is recomputed, because a rate that only applied to
+    // future transactions would leave the books disagreeing with themselves.
+    const redone = await pool.query(
+      `SELECT (post_gateway_fees(month, $1)).* FROM gateway_settlement`,
+      [req.adminEmail]);
+
+    await logAdminAction(req, 'finance.gateway_fee.update', { gateway, percent });
+    res.json({ updated: true, months_recalculated: redone.rows.length });
+  }));
+
+  /** Recompute a month without changing the rate. */
+  router.post('/gateway-fees/post', handleReq(async (req: any, res: any) => {
+    const r = await pool.query(
+      'SELECT * FROM post_gateway_fees($1::date, $2)',
+      [req.body.month || new Date().toISOString().slice(0, 10), req.adminEmail]);
+    await logAdminAction(req, 'finance.gateway_fee.post', { month: req.body.month });
+    res.json(r.rows[0]);
+  }));
+
+  /**
    * Subscriptions whose tier and payment history disagree.
    *
    * WHY THIS ENDPOINT EXISTS. log_membership_change() spent two months

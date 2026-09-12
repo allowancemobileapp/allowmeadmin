@@ -7,6 +7,7 @@ import {
   PayPayrollModal, PaymentHistory, Reconciliation,
 } from './PayrollPayment';
 import { ExpenseTagging } from './ExpenseTagging';
+import { GatewayFees } from './GatewayFees';
 import {
   ShieldCheck, Lock, AlertTriangle, CheckCircle2, XCircle, Clock,
   ArrowRightLeft, FilePlus2, Wallet, Target, TrendingUp, Receipt,
@@ -63,7 +64,9 @@ export function GrossProfitTab({ get, post, put, role }: any) {
 
   return (
     <div className="space-y-6">
-      <Note tone="indigo" title="This figure is contractual.">
+            <GatewayFees get={get} post={post} put={put} role={role} />
+
+<Note tone="indigo" title="This figure is contractual.">
         Four people's salaries are calculated from it, and this app is named in
         their contracts as the primary source. Once certified it cannot be
         edited — a correction is a new version and both stay visible for six

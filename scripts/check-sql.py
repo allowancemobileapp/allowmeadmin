@@ -53,6 +53,12 @@ def wrapper_return_type(sql, body, start):
         return 'void'
     if re.search(r'\b(NEW|OLD)\s*\.', body):
         return 'trigger'
+    # RETURN QUERY only parses inside a set-returning function, which is what a
+    # RETURNS TABLE(...) declaration makes. Wrapping one as RETURNS text
+    # rejects correct SQL -- the third false positive this harness has thrown,
+    # and each one costs more trust than the bugs it catches are worth.
+    if re.search(r'\bRETURN\s+QUERY\b', body, re.I):
+        return 'SETOF record'
     return 'text'
 
 

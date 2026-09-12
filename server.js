@@ -1154,6 +1154,81 @@ function createFinanceRouter(pool2) {
     await logAdminAction2(req, "finance.expense.add", { title, amount, person_id });
     res.status(201).json(r.rows[0]);
   }));
+  router.get("/gateway-fees", handleReq(async (_req, res) => {
+    try {
+      const [months, schedule, posted] = await Promise.all([
+        pool2.query("SELECT * FROM gateway_settlement"),
+        pool2.query(`SELECT gateway, percent, flat_kobo, flat_waived_below_kobo,
+                           cap_kobo, note
+                      FROM payment_gateway_fees ORDER BY gateway`),
+        pool2.query(`SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS rows
+                      FROM company_expenses WHERE category = 'payment_processing'`)
+      ]);
+      res.json({
+        months: months.rows.map((m) => ({
+          month: m.month,
+          transactions: Number(m.transactions),
+          charged_kobo: Number(m.charged_kobo),
+          fee_kobo: Number(m.fee_kobo),
+          net_to_bank_kobo: Number(m.net_to_bank_kobo),
+          effective_pct: Number(m.effective_pct)
+        })),
+        schedule: schedule.rows.map((r) => ({
+          ...r,
+          percent: Number(r.percent),
+          flat_kobo: Number(r.flat_kobo),
+          flat_waived_below_kobo: Number(r.flat_waived_below_kobo),
+          cap_kobo: r.cap_kobo === null ? null : Number(r.cap_kobo)
+        })),
+        posted_naira: Number(posted.rows[0]?.total || 0),
+        posted_rows: Number(posted.rows[0]?.rows || 0)
+      });
+    } catch (e) {
+      if (e.code === "42P01" || e.code === "42883") {
+        return res.status(400).json({
+          error: "Gateway fees are not set up yet. Run migrations/0097_gateway_fees.sql."
+        });
+      }
+      throw e;
+    }
+  }));
+  router.put("/gateway-fees", handleReq(async (req, res) => {
+    const { gateway, percent, flat_kobo, flat_waived_below_kobo, cap_kobo } = req.body;
+    if (!gateway) return res.status(400).json({ error: "Which gateway?" });
+    if (percent === void 0 || Number(percent) < 0) {
+      return res.status(400).json({ error: "A percentage is required." });
+    }
+    await pool2.query(
+      `
+      UPDATE payment_gateway_fees
+         SET percent = $2, flat_kobo = $3, flat_waived_below_kobo = $4,
+             cap_kobo = $5, updated_at = now(),
+             note = COALESCE(note, '') || ' | corrected by ' || $6
+       WHERE gateway = $1`,
+      [
+        gateway,
+        Number(percent),
+        Math.round(Number(flat_kobo) || 0),
+        Math.round(Number(flat_waived_below_kobo) || 0),
+        cap_kobo === null || cap_kobo === "" ? null : Math.round(Number(cap_kobo)),
+        req.adminEmail
+      ]
+    );
+    const redone = await pool2.query(
+      `SELECT (post_gateway_fees(month, $1)).* FROM gateway_settlement`,
+      [req.adminEmail]
+    );
+    await logAdminAction2(req, "finance.gateway_fee.update", { gateway, percent });
+    res.json({ updated: true, months_recalculated: redone.rows.length });
+  }));
+  router.post("/gateway-fees/post", handleReq(async (req, res) => {
+    const r = await pool2.query(
+      "SELECT * FROM post_gateway_fees($1::date, $2)",
+      [req.body.month || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), req.adminEmail]
+    );
+    await logAdminAction2(req, "finance.gateway_fee.post", { month: req.body.month });
+    res.json(r.rows[0]);
+  }));
   router.get("/discrepancies", handleReq(async (_req, res) => {
     try {
       const r = await pool2.query(`
@@ -4255,6 +4330,10 @@ var FINANCE_RULES = [
   },
   // -- Gross profit --------------------------------------------------------
   { test: /^\/gross-profit(\/|$)/, screens: ["grossprofit"] },
+  // The processor's cut is a deductible cost, so it belongs to whoever
+  // can see gross profit -- and to Money in & out, where the gap between
+  // charged and banked is the question being asked.
+  { test: /^\/gateway-fees(\/|$)/, screens: ["grossprofit", "overview"] },
   // -- Payroll -------------------------------------------------------------
   //
   // THESE TWO COME FIRST, and the order matters -- the first matching rule
@@ -5389,21 +5468,28 @@ app.get("/api/metadata/stats", requireAdmin, async (req, res) => {
 app.get("/api/transactions", requireAdmin, async (req, res) => {
   try {
     const memRes = await pool.query(`
-      SELECT id::text, 'Membership' as type, (amount / 100.0) as amount, tier as status, payment_reference as reference, user_id::text as user_email, created_at
-      FROM membership_payments
-      ORDER BY created_at DESC LIMIT 200
+      SELECT mp.id::text, 'Membership' as type, (mp.amount / 100.0) as amount,
+             mp.tier as status, mp.payment_reference as reference,
+             COALESCE(p.username, mp.user_id::text) as user_email,
+             mp.verification, mp.created_at
+      FROM membership_payments mp
+      LEFT JOIN profiles p ON p.id::text = mp.user_id
+      ORDER BY mp.created_at DESC LIMIT 200
     `);
     const gistRes = await pool.query(`
       SELECT id::text, 'Gist' as type,
              COALESCE(NULLIF(amount_paid, 0), total_price, 0) as amount,
-             status, payment_reference as reference, user_id::text as user_email, created_at
+             status, payment_reference as reference, user_id::text as user_email,
+             'gateway' as verification, created_at
       FROM gists
       WHERE ((amount_paid IS NOT NULL AND amount_paid > 0) OR paid = true)
         AND (payment_reference IS NULL OR payment_reference NOT ILIKE 'coupon%')
       ORDER BY created_at DESC LIMIT 200
     `);
     const ticketRes = await pool.query(`
-      SELECT id::text, 'Ticket' as type, amount_paid as amount, status, payment_reference as reference, user_id::text as user_email, created_at
+      SELECT id::text, 'Ticket' as type, amount_paid as amount, status,
+             payment_reference as reference, user_id::text as user_email,
+             'gateway' as verification, created_at
       FROM ticket_purchases
       WHERE amount_paid IS NOT NULL AND amount_paid > 0
       ORDER BY created_at DESC LIMIT 200
