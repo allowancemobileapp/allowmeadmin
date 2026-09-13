@@ -16,6 +16,7 @@ import { financeGuard, liveGuard, peopleGuard } from "./server/financeAccess.js"
 import { verifyIdToken, bearerToken } from "./server/auth.js";
 import { createUndoRouter } from "./server/undoRoutes.js";
 import { createRolesRouter } from "./server/rolesRoutes.js";
+import { createAmbassadorRouter } from "./server/ambassadorRoutes.js";
 
 dotenv.config();
 
@@ -422,6 +423,11 @@ app.use('/api/undo', requireAdmin, createUndoRouter(pool));
 // locked by a trigger in the app's 0087; these routes go through the
 // review functions, which are the only door through it.
 app.use('/api/roles', requireAdmin, createRolesRouter(pool));
+// Ambassador referral codes. The RPCs gate on is_app_admin(), which needs a
+// Supabase identity this Firebase-authenticated dashboard does not have --
+// the router supplies the email requireAdmin already verified so the
+// database can run its own check.
+app.use('/api/ambassadors', requireAdmin, createAmbassadorRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {

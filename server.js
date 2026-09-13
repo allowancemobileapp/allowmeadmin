@@ -5004,6 +5004,117 @@ function createRolesRouter(pool2) {
   return router;
 }
 
+// server/ambassadorRoutes.ts
+import { Router as Router9 } from "express";
+function createAmbassadorRouter(pool2) {
+  const router = Router9();
+  const handle = (fn) => async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (e) {
+      console.error("[ambassadors]", e);
+      if (e.code === "42883") {
+        return res.status(400).json({
+          error: "The referral RPCs are not in this database. list_referral_ambassadors and set_referral_plus are expected."
+        });
+      }
+      res.status(400).json({ error: e.message });
+    }
+  };
+  const logAdminAction2 = async (req, action, details) => {
+    try {
+      await pool2.query(
+        `INSERT INTO system_logs (type, admin_email, action, details)
+         VALUES ($1, $2, $3, $4)`,
+        ["admin", req.adminEmail || "unknown", action, JSON.stringify(details)]
+      );
+    } catch (e) {
+      console.error("log failed", e);
+    }
+  };
+  const asAdmin = async (email, fn) => {
+    const client = await pool2.connect();
+    try {
+      await client.query("BEGIN");
+      const prof = await client.query(
+        "SELECT id FROM profiles WHERE lower(email) = lower($1) LIMIT 1",
+        [email]
+      );
+      const sub = prof.rows[0]?.id || "00000000-0000-0000-0000-000000000000";
+      await client.query(
+        `SELECT set_config('request.jwt.claims', $1, true)`,
+        [JSON.stringify({ sub, email, role: "authenticated" })]
+      );
+      const out = await fn(client);
+      await client.query("COMMIT");
+      return out;
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {
+      });
+      throw e;
+    } finally {
+      client.release();
+    }
+  };
+  router.get("/access", handle(async (req, res) => {
+    const ok = await asAdmin(req.adminEmail, async (c) => {
+      const r = await c.query("SELECT public.is_app_admin() AS ok");
+      return r.rows[0]?.ok === true;
+    });
+    res.json({ allowed: ok });
+  }));
+  router.get("/", handle(async (req, res) => {
+    const rows = await asAdmin(req.adminEmail, async (c) => {
+      const r = await c.query("SELECT * FROM public.list_referral_ambassadors()");
+      return r.rows;
+    });
+    res.json(rows.map((a) => ({
+      username: a.username,
+      full_name: a.full_name,
+      avatar_url: a.avatar_url,
+      days: Number(a.days),
+      signups: Number(a.signups),
+      weeks_granted: Number(a.weeks_granted),
+      paid_conversions: Number(a.paid_conversions)
+    })).sort((x, y) => y.signups - x.signups));
+  }));
+  router.post("/", handle(async (req, res) => {
+    const username = String(req.body?.username || "").trim().replace(/^@/, "");
+    const days = Number(req.body?.days);
+    if (!username) {
+      return res.status(400).json({ error: "Which username?" });
+    }
+    if (!Number.isInteger(days)) {
+      return res.status(400).json({ error: "Days has to be a whole number." });
+    }
+    const out = await asAdmin(req.adminEmail, async (c) => {
+      const r = await c.query(
+        "SELECT public.set_referral_plus($1, $2) AS result",
+        [username, days]
+      );
+      return r.rows[0]?.result || {};
+    });
+    if (out.ok !== true) {
+      const messages = {
+        not_admin: "This account is not in admin_users, so the database refused the change. Being signed in to the dashboard is not the same as being an app admin.",
+        no_such_user: `No user called @${username}. A referral code is a username, so it has to match one exactly \u2014 check the spelling.`,
+        days_out_of_range: `${days} days is outside the allowed range. It has to be between 0 and 90, where 0 turns the code back into an ordinary one.`
+      };
+      return res.status(400).json({
+        error: messages[out.reason] || `The database refused that: ${out.reason || "no reason given"}.`,
+        reason: out.reason || null
+      });
+    }
+    await logAdminAction2(
+      req,
+      days === 0 ? "ambassador.code.disabled" : "ambassador.code.set",
+      { username: out.username, days: out.days }
+    );
+    res.json({ ok: true, username: out.username, days: Number(out.days) });
+  }));
+  return router;
+}
+
 // server.ts
 import cors from "cors";
 dotenv.config();
@@ -5296,6 +5407,7 @@ app.use("/api/people", requireAdmin, peopleGuard, createPeopleRouter(pool));
 app.use("/api/live", requireAdmin, liveGuard, createLiveRouter(pool));
 app.use("/api/undo", requireAdmin, createUndoRouter(pool));
 app.use("/api/roles", requireAdmin, createRolesRouter(pool));
+app.use("/api/ambassadors", requireAdmin, createAmbassadorRouter(pool));
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM company_expenses ORDER BY expense_date DESC");

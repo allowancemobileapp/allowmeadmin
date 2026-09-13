@@ -26,6 +26,7 @@ const PAGE_MODULES = [
     { id: 'approvals', label: 'Pending Approvals' },
   { id: 'feed_approvals', label: 'Feed Approvals' },
   { id: 'role_applications', label: 'Agents & Vendors' },
+  { id: 'ambassadors', label: 'Ambassador Codes' },
   { id: 'schools_mgmt', label: 'School Mgmt' },
   { id: 'analytics', label: 'Analytics & Growth' },
   // Company Finance was reachable in the sidebar but missing from this list,
