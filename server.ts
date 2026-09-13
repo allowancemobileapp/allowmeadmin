@@ -12,7 +12,7 @@ import { createFinanceRouter } from "./server/financeRoutes.js";
 import { createFinanceV2Router } from "./server/financeV2Routes.js";
 import { createPeopleRouter } from "./server/peopleRoutes.js";
 import { createLiveRouter } from "./server/liveRoutes.js";
-import { financeGuard, liveGuard, peopleGuard } from "./server/financeAccess.js";
+import { financeGuard, liveGuard, peopleGuard, pageGuard } from "./server/financeAccess.js";
 import { verifyIdToken, bearerToken } from "./server/auth.js";
 import { createUndoRouter } from "./server/undoRoutes.js";
 import { createRolesRouter } from "./server/rolesRoutes.js";
@@ -422,12 +422,16 @@ app.use('/api/undo', requireAdmin, createUndoRouter(pool));
 // Delivery-agent and transport-vendor applications. The flag itself is
 // locked by a trigger in the app's 0087; these routes go through the
 // review functions, which are the only door through it.
-app.use('/api/roles', requireAdmin, createRolesRouter(pool));
+app.use('/api/roles', requireAdmin,
+        pageGuard('role_applications', 'Agents & Vendors'),
+        createRolesRouter(pool));
 // Ambassador referral codes. The RPCs gate on is_app_admin(), which needs a
 // Supabase identity this Firebase-authenticated dashboard does not have --
 // the router supplies the email requireAdmin already verified so the
 // database can run its own check.
-app.use('/api/ambassadors', requireAdmin, createAmbassadorRouter(pool));
+app.use('/api/ambassadors', requireAdmin,
+        pageGuard('ambassadors', 'Ambassador Codes'),
+        createAmbassadorRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {

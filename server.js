@@ -4460,6 +4460,19 @@ function financeScreenGuard(rules, label) {
     });
   };
 }
+function pageGuard(pageId, label) {
+  return function guard(req, res, next) {
+    const email = String(req.adminEmail || "").toLowerCase();
+    if (SUPER_ADMINS.includes(email)) return next();
+    const perms = req.adminPermissions || {};
+    if (perms.all) return next();
+    const pages = Array.isArray(perms.pages) ? perms.pages : [];
+    if (pages.includes(pageId)) return next();
+    return res.status(403).json({
+      error: `This account has not been granted ${label}. It can be turned on from Account Permissions.`
+    });
+  };
+}
 var financeGuard = financeScreenGuard(FINANCE_RULES, "finance");
 var liveGuard = financeScreenGuard(LIVE_RULES, "live");
 var peopleGuard = financeScreenGuard(PEOPLE_RULES, "people");
@@ -5406,8 +5419,18 @@ app.use("/api/finance", requireAdmin, financeGuard, createFinanceV2Router(pool))
 app.use("/api/people", requireAdmin, peopleGuard, createPeopleRouter(pool));
 app.use("/api/live", requireAdmin, liveGuard, createLiveRouter(pool));
 app.use("/api/undo", requireAdmin, createUndoRouter(pool));
-app.use("/api/roles", requireAdmin, createRolesRouter(pool));
-app.use("/api/ambassadors", requireAdmin, createAmbassadorRouter(pool));
+app.use(
+  "/api/roles",
+  requireAdmin,
+  pageGuard("role_applications", "Agents & Vendors"),
+  createRolesRouter(pool)
+);
+app.use(
+  "/api/ambassadors",
+  requireAdmin,
+  pageGuard("ambassadors", "Ambassador Codes"),
+  createAmbassadorRouter(pool)
+);
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM company_expenses ORDER BY expense_date DESC");

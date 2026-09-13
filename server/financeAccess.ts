@@ -192,6 +192,33 @@ export function financeScreenGuard(rules: Rule[], label: string) {
   };
 }
 
+/**
+ * Require one granted PAGE, for routers that are not screen-by-screen.
+ *
+ * WHY IT MATTERS MORE THAN IT LOOKS. Hiding a link in the sidebar hides the
+ * link. /api/roles approves delivery agents -- people who then collect cash
+ * from students -- and until this existed, anybody in admin_users could call
+ * it directly however little they had been granted. A permission that only
+ * exists in React is a suggestion.
+ */
+export function pageGuard(pageId: string, label: string) {
+  return function guard(req: Request, res: Response, next: NextFunction) {
+    const email = String((req as any).adminEmail || '').toLowerCase();
+    if (SUPER_ADMINS.includes(email)) return next();
+
+    const perms = (req as any).adminPermissions || {};
+    if (perms.all) return next();
+
+    const pages: string[] = Array.isArray(perms.pages) ? perms.pages : [];
+    if (pages.includes(pageId)) return next();
+
+    return res.status(403).json({
+      error: `This account has not been granted ${label}. It can be turned on `
+           + 'from Account Permissions.',
+    });
+  };
+}
+
 export const financeGuard = financeScreenGuard(FINANCE_RULES, 'finance');
 export const liveGuard    = financeScreenGuard(LIVE_RULES, 'live');
 export const peopleGuard  = financeScreenGuard(PEOPLE_RULES, 'people');

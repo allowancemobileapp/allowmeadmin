@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { auth } from '../firebase';
+import { auth, loginWithGoogle } from '../firebase';
 import { ShieldCheck, X, KeyRound } from 'lucide-react';
 
 export const SUPER_ADMINS = [
@@ -115,22 +115,55 @@ export function PinSettings({ get, post }: any) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  // The server wants a recent sign-in and this screen has to offer one.
+  const [needsReauth, setNeedsReauth] = useState(false);
 
   const load = () => get('/api/undo/pin').then(setStatus).catch(() => setStatus(null));
   useEffect(() => { load(); }, []);
 
   if (!status?.is_super_admin) return null;
 
+  const submit = async () => {
+    await post('/api/undo/pin', { pin: next, current_pin: current || null });
+    setMsg(status.has_pin ? 'PIN changed.' : 'PIN set.');
+    setCurrent(''); setNext(''); setConfirm('');
+    setNeedsReauth(false); setOpen(false);
+    load();
+  };
+
   const save = async () => {
     if (next !== confirm) { setErr('The two new PINs do not match.'); return; }
     setBusy(true); setErr(null); setMsg(null);
     try {
-      await post('/api/undo/pin', { pin: next, current_pin: current || null });
-      setMsg(status.has_pin ? 'PIN changed.' : 'PIN set.');
-      setCurrent(''); setNext(''); setConfirm(''); setOpen(false);
-      load();
-    } catch (e: any) { setErr(e.message); }
-    finally { setBusy(false); }
+      await submit();
+    } catch (e: any) {
+      // A dead-end "sign in again" with nothing to click is not an
+      // instruction, it is a wall. Offer the sign-in here instead.
+      if (/sign in again|REAUTH_REQUIRED/i.test(e?.message || '')) {
+        setNeedsReauth(true);
+        setErr(null);
+      } else {
+        setErr(e.message);
+      }
+    } finally { setBusy(false); }
+  };
+
+  /**
+   * Re-authenticate, then finish the thing that was blocked.
+   *
+   * getIdToken(true) forces a refresh. Without it the browser keeps handing
+   * over the token it already had, whose auth_time is the old one, and the
+   * server keeps refusing however many times somebody signs in.
+   */
+  const reauthThenSave = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await loginWithGoogle();
+      await auth.currentUser?.getIdToken(true);
+      await submit();
+    } catch (e: any) {
+      setErr(e?.message || 'Could not confirm it is you.');
+    } finally { setBusy(false); }
   };
 
   const box = 'w-full text-center text-xl font-mono tracking-[0.4em] py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500';
@@ -208,10 +241,25 @@ export function PinSettings({ get, post }: any) {
           {err && <p className="text-sm text-rose-600 font-medium">{err}</p>}
           {msg && <p className="text-sm text-emerald-600 font-medium">{msg}</p>}
 
-          <button onClick={save} disabled={busy || next.length !== 6}
-                  className="w-full py-2.5 rounded-lg bg-slate-900 dark:bg-indigo-600 text-white font-bold text-sm disabled:opacity-40">
-            {busy ? 'Saving…' : status.has_pin ? 'Change PIN' : 'Set PIN'}
-          </button>
+          {needsReauth ? (
+            <div className="p-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 space-y-3">
+              <p className="text-xs text-amber-800 dark:text-amber-400">
+                Your first PIN needs a fresh sign-in, because there is no older
+                PIN to prove with. Confirm below and it will be set straight
+                away &mdash; your digits are still here.
+              </p>
+              <button onClick={reauthThenSave} disabled={busy}
+                      className="w-full py-2.5 rounded-lg bg-slate-900 dark:bg-indigo-600 text-white font-bold text-sm disabled:opacity-40">
+                {busy ? 'Confirming…'
+                      : `Sign in as ${auth.currentUser?.email || 'yourself'} and set it`}
+              </button>
+            </div>
+          ) : (
+            <button onClick={save} disabled={busy || next.length !== 6}
+                    className="w-full py-2.5 rounded-lg bg-slate-900 dark:bg-indigo-600 text-white font-bold text-sm disabled:opacity-40">
+              {busy ? 'Saving…' : status.has_pin ? 'Change PIN' : 'Set PIN'}
+            </button>
+          )}
         </div>
       )}
     </div>

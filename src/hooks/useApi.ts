@@ -63,18 +63,39 @@ async function request<T>(url: string, init: RequestInit): Promise<T> {
   return res.json();
 }
 
-export const useApi = () => {
-  const get = <T,>(url: string): Promise<T> =>
-    request<T>(url, { method: 'GET' });
+/**
+ * ONE object, created once, for the whole application.
+ *
+ * WHY THIS IS NOT BUILT INSIDE THE HOOK. It was, and every render produced
+ * fresh `get`/`post` closures with new identities. Any component that wrote
+ * the ordinary thing --
+ *
+ *     const load = useCallback(async () => { ... }, [get]);
+ *     useEffect(() => { load(); }, [load]);
+ *
+ * -- got an infinite request loop: new `get` per render meant new `load`,
+ * which re-fired the effect, which set state, which rendered again. Seven
+ * screens were doing it. The visible symptom was a page flickering between
+ * two states as responses resolved out of order; the invisible one was the
+ * database being queried on every single render.
+ *
+ * These functions close over nothing from any component -- they only call the
+ * module-level `request` -- so there is no reason for them to be rebuilt per
+ * render, and every reason not to be. Frozen so nothing can reintroduce the
+ * problem by reassigning a method on it.
+ */
+const API = Object.freeze({
+  get: <T,>(url: string): Promise<T> =>
+    request<T>(url, { method: 'GET' }),
 
-  const post = <T,>(url: string, body: any): Promise<T> =>
-    request<T>(url, { method: 'POST', body: JSON.stringify(body) });
+  post: <T,>(url: string, body: any): Promise<T> =>
+    request<T>(url, { method: 'POST', body: JSON.stringify(body) }),
 
-  const put = <T,>(url: string, body: any): Promise<T> =>
-    request<T>(url, { method: 'PUT', body: JSON.stringify(body) });
+  put: <T,>(url: string, body: any): Promise<T> =>
+    request<T>(url, { method: 'PUT', body: JSON.stringify(body) }),
 
-  const del = <T,>(url: string): Promise<T> =>
-    request<T>(url, { method: 'DELETE' });
+  del: <T,>(url: string): Promise<T> =>
+    request<T>(url, { method: 'DELETE' }),
+});
 
-  return { get, post, put, del };
-};
+export const useApi = () => API;

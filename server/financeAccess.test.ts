@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { financeGuard, liveGuard, peopleGuard } from './financeAccess';
+import { financeGuard, liveGuard, peopleGuard, pageGuard } from './financeAccess';
 
 /**
  * The guard is default-deny, which is the right way round for salary data and
@@ -158,6 +158,22 @@ describe('finance screen guard', () => {
     const pay = { pages: ['finance'], finance_tabs: ['payroll'] };
     expect(run(financeGuard, '/payroll', pay).passed).toBe(true);
     expect(run(financeGuard, '/payroll/people', pay).passed).toBe(true);
+  });
+
+  it('gates Agents & Vendors and Ambassadors on their page grant', () => {
+    // Approving a delivery agent lets somebody collect cash from students, so
+    // the API has to check the grant -- not just the sidebar.
+    const roles = pageGuard('role_applications', 'Agents & Vendors');
+    const amb = pageGuard('ambassadors', 'Ambassador Codes');
+
+    expect(run(roles, '/applications', { pages: ['role_applications'] }).passed).toBe(true);
+    expect(run(roles, '/applications', { pages: ['dashboard'] }).passed).toBe(false);
+    expect(run(amb, '/', { pages: ['ambassadors'] }).passed).toBe(true);
+    expect(run(amb, '/', { pages: ['dashboard'] }).passed).toBe(false);
+
+    // The super admin and an all-access grant still pass.
+    expect(run(roles, '/applications', {}, 'allowancemobileapp@gmail.com').passed).toBe(true);
+    expect(run(amb, '/', { all: true }).passed).toBe(true);
   });
 
   it('does not let Campuses reach the payroll or the cap table', () => {
