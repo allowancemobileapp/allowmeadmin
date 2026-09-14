@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { Pool } from "pg";
+import { asAdmin as asAdminShared } from "./asAdmin.js";
 
 /**
  * Ambassador referral codes.
@@ -48,43 +49,9 @@ export function createAmbassadorRouter(pool: Pool) {
     } catch (e) { console.error('log failed', e); }
   };
 
-  /**
-   * Run something with the signed-in admin's identity visible to Postgres.
-   *
-   * SET LOCAL is transaction-scoped, which is the property that matters: the
-   * claims cannot outlive this call and leak onto the next request that
-   * happens to get the same pooled connection. That is why this takes a
-   * dedicated client and a BEGIN rather than using pool.query directly.
-   */
-  const asAdmin = async <T>(email: string, fn: (c: any) => Promise<T>): Promise<T> => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // is_app_admin() returns false immediately when auth.uid() is NULL, so
-      // `sub` has to be present. The real profile id is used where the admin
-      // has one; otherwise any non-null uuid does, because the email claim
-      // takes precedence over the profile lookup inside the function. The
-      // EMAIL is what is actually checked against admin_users.
-      const prof = await client.query(
-        'SELECT id FROM profiles WHERE lower(email) = lower($1) LIMIT 1',
-        [email]);
-      const sub = prof.rows[0]?.id || '00000000-0000-0000-0000-000000000000';
-
-      await client.query(
-        `SELECT set_config('request.jwt.claims', $1, true)`,
-        [JSON.stringify({ sub, email, role: 'authenticated' })]);
-
-      const out = await fn(client);
-      await client.query('COMMIT');
-      return out;
-    } catch (e) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw e;
-    } finally {
-      client.release();
-    }
-  };
+  // Shared with plusRoutes -- see asAdmin.ts for why this exists.
+  const asAdmin = <T,>(email: string, fn: (c: any) => Promise<T>) =>
+    asAdminShared(pool, email, fn);
 
   /** Am I allowed to see this page at all? */
   router.get('/access', handle(async (req: any, res: any) => {

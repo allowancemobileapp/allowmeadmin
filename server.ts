@@ -17,6 +17,7 @@ import { verifyIdToken, bearerToken } from "./server/auth.js";
 import { createUndoRouter } from "./server/undoRoutes.js";
 import { createRolesRouter } from "./server/rolesRoutes.js";
 import { createAmbassadorRouter } from "./server/ambassadorRoutes.js";
+import { createPlusRouter } from "./server/plusRoutes.js";
 
 dotenv.config();
 
@@ -432,6 +433,12 @@ app.use('/api/roles', requireAdmin,
 app.use('/api/ambassadors', requireAdmin,
         pageGuard('ambassadors', 'Ambassador Codes'),
         createAmbassadorRouter(pool));
+// Plus membership: grant, revoke, and who has it. Every write is an RPC gated
+// on is_app_admin() -- docs/PAYMENTS.md §12 forbids touching profiles'
+// billing columns directly and the database enforces it.
+app.use('/api/plus', requireAdmin,
+        pageGuard('plus_members', 'Plus Members'),
+        createPlusRouter(pool));
 
 // -- Expenses --
 app.get('/api/expenses', requireAdmin, async (req, res) => {

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { asAdmin } from "./asAdmin.js";
 
 export function createUserRouter(pool: any) {
   const router = Router();
@@ -84,18 +85,52 @@ export function createUserRouter(pool: any) {
       return res.status(403).json({ error: 'Only allowancemobileapp@gmail.com can upgrade users.' });
     }
 
-    const { tier } = req.body; // usually 'plus' or 'free'
-    const expiresAt = new Date();
-    expiresAt.setFullYear(expiresAt.getFullYear() + 10); // 10 years
+    // WAS: a direct UPDATE of subscription_tier and subscription_expires_at,
+    // granting TEN YEARS. docs/PAYMENTS.md §12 forbids exactly that write --
+    // and because this server connects as postgres, the guard trigger let it
+    // through. That is the doc's "if it ever were not refused it would be a
+    // hole", and it was open. Both directions now go through the §5 RPCs,
+    // which cap a grant at 366 days and gate on is_app_admin().
+    const { tier } = req.body; // 'plus' or 'free'
+    const days = Number.isInteger(Number(req.body.days)) ? Number(req.body.days) : 30;
 
-    const result = await pool.query(
-      'UPDATE profiles SET subscription_tier = $1, subscription_expires_at = $2 WHERE id = $3 RETURNING *',
-      [tier, expiresAt, id]
-    );
+    const who = await pool.query('SELECT username FROM profiles WHERE id = $1', [id]);
+    if (!who.rows[0]?.username) {
+      return res.status(404).json({ error: 'No such user, or they have no username yet.' });
+    }
+    const username = who.rows[0].username;
+    const wantsPlus = String(tier).toLowerCase() === 'plus'
+                   || String(tier).toLowerCase() === 'membership';
 
-    await logAdminAction(req, `Updated user ${id} subscription tier to ${tier}`, { tier, expiresAt });
+    const out = await asAdmin(pool, adminEmail, async (c) => {
+      const r = wantsPlus
+        ? await c.query('SELECT public.admin_grant_plus($1, $2) AS result', [username, days])
+        : await c.query('SELECT public.admin_revoke_plus($1) AS result', [username]);
+      return r.rows[0]?.result || {};
+    });
 
-    res.json(result.rows[0]);
+    if (out.ok !== true) {
+      const why: Record<string, string> = {
+        not_admin: 'The database does not recognise this account as an app admin.',
+        no_such_user: `No user called @${username}.`,
+        days_out_of_range: `${days} days is outside the allowed 1 to 366.`,
+      };
+      return res.status(400).json({ error: why[out.reason] || `Refused: ${out.reason}` });
+    }
+
+    await logAdminAction(req,
+      wantsPlus ? `Granted @${username} ${days} days of Plus` : `Revoked Plus from @${username}`,
+      { username, days: wantsPlus ? days : 0, ...out });
+
+    const fresh = await pool.query(
+      'SELECT id, subscription_tier, subscription_expires_at FROM profiles WHERE id = $1', [id]);
+
+    res.json({
+      ...fresh.rows[0],
+      // §12 MUST: when revoke says has_paystack_customer, the admin has to be
+      // told to cancel at Paystack. The Users page surfaces this.
+      must_cancel_at_paystack: !wantsPlus && out.has_paystack_customer === true,
+    });
   }));
 
   // Endpoint to edit a gist

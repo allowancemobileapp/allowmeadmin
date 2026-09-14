@@ -572,6 +572,34 @@ ${text}` });
 
 // server/userRoutes.ts
 import { Router as Router2 } from "express";
+
+// server/asAdmin.ts
+async function asAdmin(pool2, email, fn) {
+  const client = await pool2.connect();
+  try {
+    await client.query("BEGIN");
+    const prof = await client.query(
+      "SELECT id FROM profiles WHERE lower(email) = lower($1) LIMIT 1",
+      [email]
+    );
+    const sub = prof.rows[0]?.id || "00000000-0000-0000-0000-000000000000";
+    await client.query(
+      `SELECT set_config('request.jwt.claims', $1, true)`,
+      [JSON.stringify({ sub, email, role: "authenticated" })]
+    );
+    const out = await fn(client);
+    await client.query("COMMIT");
+    return out;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// server/userRoutes.ts
 function createUserRouter(pool2) {
   const router = Router2();
   const handleReq = (handler) => async (req, res) => {
@@ -644,14 +672,40 @@ function createUserRouter(pool2) {
       return res.status(403).json({ error: "Only allowancemobileapp@gmail.com can upgrade users." });
     }
     const { tier } = req.body;
-    const expiresAt = /* @__PURE__ */ new Date();
-    expiresAt.setFullYear(expiresAt.getFullYear() + 10);
-    const result = await pool2.query(
-      "UPDATE profiles SET subscription_tier = $1, subscription_expires_at = $2 WHERE id = $3 RETURNING *",
-      [tier, expiresAt, id]
+    const days = Number.isInteger(Number(req.body.days)) ? Number(req.body.days) : 30;
+    const who = await pool2.query("SELECT username FROM profiles WHERE id = $1", [id]);
+    if (!who.rows[0]?.username) {
+      return res.status(404).json({ error: "No such user, or they have no username yet." });
+    }
+    const username = who.rows[0].username;
+    const wantsPlus = String(tier).toLowerCase() === "plus" || String(tier).toLowerCase() === "membership";
+    const out = await asAdmin(pool2, adminEmail, async (c) => {
+      const r = wantsPlus ? await c.query("SELECT public.admin_grant_plus($1, $2) AS result", [username, days]) : await c.query("SELECT public.admin_revoke_plus($1) AS result", [username]);
+      return r.rows[0]?.result || {};
+    });
+    if (out.ok !== true) {
+      const why = {
+        not_admin: "The database does not recognise this account as an app admin.",
+        no_such_user: `No user called @${username}.`,
+        days_out_of_range: `${days} days is outside the allowed 1 to 366.`
+      };
+      return res.status(400).json({ error: why[out.reason] || `Refused: ${out.reason}` });
+    }
+    await logAdminAction2(
+      req,
+      wantsPlus ? `Granted @${username} ${days} days of Plus` : `Revoked Plus from @${username}`,
+      { username, days: wantsPlus ? days : 0, ...out }
     );
-    await logAdminAction2(req, `Updated user ${id} subscription tier to ${tier}`, { tier, expiresAt });
-    res.json(result.rows[0]);
+    const fresh = await pool2.query(
+      "SELECT id, subscription_tier, subscription_expires_at FROM profiles WHERE id = $1",
+      [id]
+    );
+    res.json({
+      ...fresh.rows[0],
+      // §12 MUST: when revoke says has_paystack_customer, the admin has to be
+      // told to cancel at Paystack. The Users page surfaces this.
+      must_cancel_at_paystack: !wantsPlus && out.has_paystack_customer === true
+    });
   }));
   router.put("/:id/gists/:gistId", handleReq(async (req, res) => {
     const { id, gistId } = req.params;
@@ -5045,39 +5099,16 @@ function createAmbassadorRouter(pool2) {
       console.error("log failed", e);
     }
   };
-  const asAdmin = async (email, fn) => {
-    const client = await pool2.connect();
-    try {
-      await client.query("BEGIN");
-      const prof = await client.query(
-        "SELECT id FROM profiles WHERE lower(email) = lower($1) LIMIT 1",
-        [email]
-      );
-      const sub = prof.rows[0]?.id || "00000000-0000-0000-0000-000000000000";
-      await client.query(
-        `SELECT set_config('request.jwt.claims', $1, true)`,
-        [JSON.stringify({ sub, email, role: "authenticated" })]
-      );
-      const out = await fn(client);
-      await client.query("COMMIT");
-      return out;
-    } catch (e) {
-      await client.query("ROLLBACK").catch(() => {
-      });
-      throw e;
-    } finally {
-      client.release();
-    }
-  };
+  const asAdmin2 = (email, fn) => asAdmin(pool2, email, fn);
   router.get("/access", handle(async (req, res) => {
-    const ok = await asAdmin(req.adminEmail, async (c) => {
+    const ok = await asAdmin2(req.adminEmail, async (c) => {
       const r = await c.query("SELECT public.is_app_admin() AS ok");
       return r.rows[0]?.ok === true;
     });
     res.json({ allowed: ok });
   }));
   router.get("/", handle(async (req, res) => {
-    const rows = await asAdmin(req.adminEmail, async (c) => {
+    const rows = await asAdmin2(req.adminEmail, async (c) => {
       const r = await c.query("SELECT * FROM public.list_referral_ambassadors()");
       return r.rows;
     });
@@ -5100,7 +5131,7 @@ function createAmbassadorRouter(pool2) {
     if (!Number.isInteger(days)) {
       return res.status(400).json({ error: "Days has to be a whole number." });
     }
-    const out = await asAdmin(req.adminEmail, async (c) => {
+    const out = await asAdmin2(req.adminEmail, async (c) => {
       const r = await c.query(
         "SELECT public.set_referral_plus($1, $2) AS result",
         [username, days]
@@ -5124,6 +5155,131 @@ function createAmbassadorRouter(pool2) {
       { username: out.username, days: out.days }
     );
     res.json({ ok: true, username: out.username, days: Number(out.days) });
+  }));
+  return router;
+}
+
+// server/plusRoutes.ts
+import { Router as Router10 } from "express";
+function createPlusRouter(pool2) {
+  const router = Router10();
+  const handle = (fn) => async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (e) {
+      console.error("[plus]", e);
+      if (e.code === "42883") {
+        return res.status(400).json({
+          error: "The Plus RPCs are not in this database. See docs/PAYMENTS.md \xA75."
+        });
+      }
+      res.status(400).json({ error: e.message });
+    }
+  };
+  const logAdminAction2 = async (req, action, details) => {
+    try {
+      await pool2.query(
+        `INSERT INTO system_logs (type, admin_email, action, details)
+         VALUES ($1, $2, $3, $4)`,
+        ["admin", req.adminEmail || "unknown", action, JSON.stringify(details)]
+      );
+    } catch (e) {
+      console.error("log failed", e);
+    }
+  };
+  const REASONS = {
+    not_admin: () => "This account is not in admin_users, so the database refused. Being signed in to the dashboard is not the same as being an app admin.",
+    no_such_user: (u) => `No user called @${u}. Check the spelling \u2014 it has to match a username exactly.`,
+    days_out_of_range: (_u, d) => `${d} days is outside the allowed range of 1 to 366.`
+  };
+  const refuse = (res, out, username, days) => {
+    const fn = REASONS[out?.reason];
+    return res.status(400).json({
+      error: fn ? fn(username, days) : `The database refused that: ${out?.reason || "no reason given"}.`,
+      reason: out?.reason || null
+    });
+  };
+  router.get("/members", handle(async (req, res) => {
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const r = await pool2.query(`
+      SELECT p.id, p.username, p.full_name, p.avatar_url, p.email,
+             p.subscription_tier, p.subscription_expires_at,
+             p.trial_source, p.trial_ends_at,
+             p.paystack_customer_code IS NOT NULL AS has_card,
+             RIGHT(p.paystack_customer_code, 6)     AS card_tail,
+             p.referred_by IS NOT NULL             AS was_referred,
+             public.has_plus(p.id)                 AS is_plus,
+             (SELECT COUNT(*) FROM membership_payments mp
+               WHERE mp.user_id = p.id::text AND mp.amount > 0
+                 AND mp.verification = 'gateway')  AS gateway_payments
+      FROM profiles p
+      WHERE public.has_plus(p.id)
+         OR ($1 <> '' AND (lower(p.username) LIKE '%' || $1 || '%'
+                           OR lower(p.full_name) LIKE '%' || $1 || '%'
+                           OR lower(p.email) LIKE '%' || $1 || '%'))
+      ORDER BY public.has_plus(p.id) DESC,
+               p.subscription_expires_at NULLS FIRST
+      LIMIT 300`, [q]);
+    res.json(r.rows.map((m) => ({
+      ...m,
+      gateway_payments: Number(m.gateway_payments),
+      // NULL expiry is permanent and reserved for the two admin accounts
+      // (§3.1, §11.12). Said explicitly rather than rendered as a blank.
+      permanent: m.is_plus && m.subscription_expires_at === null,
+      days_left: m.subscription_expires_at ? Math.ceil((new Date(m.subscription_expires_at).getTime() - Date.now()) / 864e5) : null
+    })));
+  }));
+  router.post("/grant", handle(async (req, res) => {
+    const username = String(req.body?.username || "").trim().replace(/^@/, "");
+    const days = Number(req.body?.days);
+    if (!username) return res.status(400).json({ error: "Which username?" });
+    if (!Number.isInteger(days) || days < 1 || days > 366) {
+      return res.status(400).json({ error: "Days has to be a whole number from 1 to 366." });
+    }
+    const out = await asAdmin(pool2, req.adminEmail, async (c) => {
+      const r = await c.query(
+        "SELECT public.admin_grant_plus($1, $2) AS result",
+        [username, days]
+      );
+      return r.rows[0]?.result || {};
+    });
+    if (out.ok !== true) return refuse(res, out, username, days);
+    await logAdminAction2(
+      req,
+      "plus.granted",
+      { username: out.username, days, expires_at: out.expires_at, was: out.was }
+    );
+    res.json({
+      ok: true,
+      username: out.username,
+      expires_at: out.expires_at,
+      was: out.was,
+      // "Extended" and "granted" are different sentences. was is null for
+      // somebody who had nothing; a date for somebody who was already Plus.
+      extended: out.was !== null && out.was !== void 0
+    });
+  }));
+  router.post("/revoke", handle(async (req, res) => {
+    const username = String(req.body?.username || "").trim().replace(/^@/, "");
+    if (!username) return res.status(400).json({ error: "Which username?" });
+    const out = await asAdmin(pool2, req.adminEmail, async (c) => {
+      const r = await c.query(
+        "SELECT public.admin_revoke_plus($1) AS result",
+        [username]
+      );
+      return r.rows[0]?.result || {};
+    });
+    if (out.ok !== true) return refuse(res, out, username);
+    await logAdminAction2(
+      req,
+      "plus.revoked",
+      { username: out.username, has_paystack_customer: out.has_paystack_customer }
+    );
+    res.json({
+      ok: true,
+      username: out.username,
+      must_cancel_at_paystack: out.has_paystack_customer === true
+    });
   }));
   return router;
 }
@@ -5430,6 +5586,12 @@ app.use(
   requireAdmin,
   pageGuard("ambassadors", "Ambassador Codes"),
   createAmbassadorRouter(pool)
+);
+app.use(
+  "/api/plus",
+  requireAdmin,
+  pageGuard("plus_members", "Plus Members"),
+  createPlusRouter(pool)
 );
 app.get("/api/expenses", requireAdmin, async (req, res) => {
   try {

@@ -50,7 +50,19 @@ export default function UsersPage() {
   const handleUpgrade = async (userId: string, tier: string) => {
     try {
       const updated = await put<any>(`/api/users/${userId}/upgrade`, { tier });
-      alert(`User upgraded to ${tier} successfully.`);
+      if (updated.must_cancel_at_paystack) {
+        // Not optional. Their card is still on a Paystack subscription and
+        // will be charged next period for a product they no longer have.
+        alert('Plus revoked in the database — BUT THIS USER HAS A CARD ON FILE.\n\n'
+            + 'Their Paystack subscription is still live and will charge them again '
+            + 'next period. You must now cancel it in the Paystack dashboard '
+            + '(Customers → find them → Subscriptions → Disable), or have them '
+            + 'cancel from inside the app.');
+      } else {
+        alert(tier === 'plus'
+          ? `Granted 30 days of Plus. It ends ${new Date(updated.subscription_expires_at).toLocaleDateString('en-NG')}.`
+          : 'Plus revoked. No card was on file, so nothing to cancel at Paystack.');
+      }
       setSelectedUser((prev: any) => ({ ...prev, subscription_tier: updated.subscription_tier, subscription_expires_at: updated.subscription_expires_at }));
       setUsers(users.map(u => u.id === userId ? { ...u, subscription_tier: updated.subscription_tier } : u));
     } catch (e: any) {

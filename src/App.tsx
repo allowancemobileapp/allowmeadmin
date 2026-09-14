@@ -28,6 +28,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Megaphone,
+  Crown,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -50,6 +51,7 @@ import Transactions from './pages/Transactions';
 import FeedApprovals from './pages/FeedApprovals';
 import RoleApplications from './pages/RoleApplications';
 import Ambassadors from './pages/Ambassadors';
+import PlusMembers from './pages/PlusMembers';
 import SchoolManagement from './pages/SchoolManagement';
 import Notifications from './pages/Notifications';
 import Dashboard from './pages/Dashboard';
@@ -97,6 +99,7 @@ function Sidebar({ isOpen, setIsOpen, collapsed, setCollapsed }: {
     { to: '/approvals/feed', label: 'Feed Approvals', icon: FileCheck, id: 'feed_approvals' },
     { to: '/approvals/roles', label: 'Agents & Vendors', icon: Bike, id: 'role_applications' },
     { to: '/ambassadors', label: 'Ambassador Codes', icon: Megaphone, id: 'ambassadors' },
+    { to: '/plus', label: 'Plus Members', icon: Crown, id: 'plus_members' },
     { to: '/schools-mgmt', label: 'School Mgmt', icon: School, id: 'schools_mgmt' },
     { to: '/metadata', label: 'System Metadata', icon: Package, id: 'metadata' },
     { to: '/analytics', label: 'Analytics & Growth', icon: LineChart, id: 'analytics' },
@@ -403,6 +406,7 @@ function AppRouter() {
             <Route path="/approvals/feed" element={<FeedApprovals />} />
             <Route path="/approvals/roles" element={<RoleApplications />} />
             <Route path="/ambassadors" element={<Ambassadors />} />
+            <Route path="/plus" element={<PlusMembers />} />
             <Route path="/schools-mgmt" element={<SchoolManagement />} />
             
             <Route path="/metadata" element={<Metadata />} />
